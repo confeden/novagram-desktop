@@ -98,6 +98,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
+#include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QScreen>
 
@@ -131,6 +132,20 @@ void SetCrashAnnotationsGL() {
 		"OpenGL",
 		Core::App().settings().disableOpenGL() ? "Disabled" : "Enabled");
 #endif // DESKTOP_APP_USE_ANGLE
+}
+
+// NovaGram: on Windows the built-in Open Sans looks noticeably lighter than
+// the system UI font, so the "Default" font means the system semibold face.
+// Going through SetCustomFont (and not through the Open Sans fallback inside
+// style::internal::ResolveFont) keeps the usual x-height normalization.
+[[nodiscard]] QString ResolveCustomFontFamily(QString chosen) {
+#ifdef Q_OS_WIN
+	const auto preferred = u"Segoe UI Semibold"_q;
+	if (chosen.isEmpty() && QFontDatabase::hasFamily(preferred)) {
+		return preferred;
+	}
+#endif // Q_OS_WIN
+	return chosen;
 }
 
 base::options::toggle OptionSkipUrlSchemeRegister({
@@ -270,7 +285,7 @@ void Application::run() {
 
 	startLocalStorage();
 
-	style::SetCustomFont(settings().customFontFamily());
+	style::SetCustomFont(ResolveCustomFontFamily(settings().customFontFamily()));
 	style::internal::StartFonts();
 
 	ValidateScale();

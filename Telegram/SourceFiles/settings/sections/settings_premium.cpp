@@ -498,16 +498,9 @@ void SendAppLog(
 		not_null<::Main::Session*> session,
 		const QString &type,
 		const MTPJSONValue &data) {
-	const auto now = double(base::unixtime::now())
-		+ (QTime::currentTime().msec() / 1000.);
-	session->api().request(MTPhelp_SaveAppLog(
-		MTP_vector<MTPInputAppEvent>(1, MTP_inputAppEvent(
-			MTP_double(now),
-			MTP_string(type),
-			MTP_long(0),
-			data
-		))
-	)).send();
+	Q_UNUSED(session);
+	Q_UNUSED(type);
+	Q_UNUSED(data);
 }
 
 [[nodiscard]] QString ResolveRef(const QString &ref) {

@@ -1177,7 +1177,7 @@ void InitialLoadTheme() {
 }
 
 bool ApplyDefaultNightMode() {
-	const auto NightByDefault = Platform::IsMacStoreBuild();
+	const auto NightByDefault = true;
 	if (!NightByDefault
 		|| Window::Theme::IsNightMode()
 		|| _themeKeyDay
