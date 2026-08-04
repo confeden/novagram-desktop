@@ -60,6 +60,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "novagram/nova_screen_guard.h"
 #include "media/view/media_view_overlay_widget.h"
 #include "media/view/media_view_open_common.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -140,9 +141,13 @@ void SetCrashAnnotationsGL() {
 // style::internal::ResolveFont) keeps the usual x-height normalization.
 [[nodiscard]] QString ResolveCustomFontFamily(QString chosen) {
 #ifdef Q_OS_WIN
-	const auto preferred = u"Segoe UI Semibold"_q;
-	if (chosen.isEmpty() && QFontDatabase::hasFamily(preferred)) {
-		return preferred;
+	// Asking QFontDatabase whether the family exists is unreliable here: Qt 6
+	// often reports Segoe UI Semibold as a style of Segoe UI rather than as a
+	// family of its own, and the check silently dropped the default. Naming
+	// the family directly is safe, because an unknown family falls back to the
+	// same system default an empty one would give.
+	if (chosen.isEmpty()) {
+		return u"Segoe UI Semibold"_q;
 	}
 #endif // Q_OS_WIN
 	return chosen;
@@ -287,6 +292,10 @@ void Application::run() {
 
 	style::SetCustomFont(ResolveCustomFontFamily(settings().customFontFamily()));
 	style::internal::StartFonts();
+
+	// Installed before any window exists, so that no window is ever shown
+	// without the capture protection already applied to it.
+	NovaGram::StartScreenGuard();
 
 	Test::ApplyStartupOverrides();
 

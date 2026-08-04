@@ -19,6 +19,7 @@ enum class SystemUnlockResult;
 
 namespace Ui {
 class PasswordInput;
+class FlatLabel;
 class LinkButton;
 class RoundButton;
 class CheckView;
@@ -27,6 +28,10 @@ class CheckView;
 namespace Main {
 class Session;
 } // namespace Main
+
+namespace NovaGram {
+class PinKeypad;
+} // namespace NovaGram
 
 namespace Window {
 
@@ -78,6 +83,8 @@ private:
 	void setupSystemUnlock();
 	void suggestSystemUnlock();
 	void systemUnlockDone(base::SystemUnlockResult result);
+	void setupNovaPinMode();
+	void refreshNovaLockout();
 	void changed();
 	void submit();
 	void error();
@@ -91,6 +98,11 @@ private:
 
 	rpl::lifetime _systemUnlockSuggested;
 	base::Timer _systemUnlockCooldown;
+
+	Ui::FlatLabel *_novaHint = nullptr;
+	NovaGram::PinKeypad *_novaKeypad = nullptr;
+	base::Timer _novaLockoutTimer;
+	bool _novaPinMode = false;
 
 };
 

@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_notifications_manager.h"
 #include "platform/platform_specific.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_branding.h"
 
 #include <QtWidgets/QApplication>
 
@@ -77,9 +78,9 @@ void Tray::rebuildMenu() {
 		auto minimizeText = _textUpdates.events(
 		) | rpl::map([=] {
 			_activeForTrayIconAction = Core::App().isActiveForTrayMenu();
-			return _activeForTrayIconAction
+			return NovaGram::WithAppName(_activeForTrayIconAction
 				? tr::lng_minimize_to_tray(tr::now)
-				: tr::lng_open_from_tray(tr::now);
+				: tr::lng_open_from_tray(tr::now));
 		});
 
 		_tray.addAction(
@@ -100,7 +101,9 @@ void Tray::rebuildMenu() {
 			[=] { toggleSoundNotifications(); });
 	}
 
-	_tray.addAction(tr::lng_quit_from_tray(), [] { Core::Quit(); });
+	_tray.addAction(tr::lng_quit_from_tray() | rpl::map(
+		NovaGram::WithAppName
+	), [] { Core::Quit(); });
 
 	TrayAccountsMenu::Fill(_tray);
 

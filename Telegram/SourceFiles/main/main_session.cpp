@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_app_config.h"
 #include "main/session/send_as_peers.h"
 #include "mtproto/mtproto_config.h"
+#include "novagram/nova_autodelete.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
 #include "chat_helpers/stickers_gift_box_pack.h"
@@ -248,6 +249,10 @@ Session::Session(
 		data().stickers().notifyUpdated(Data::StickersType::Emoji);
 		data().stickers().notifySavedGifsUpdated();
 		DEBUG_LOG(("Init: Account stored data load finished."));
+	}, [=] {
+		// Reads its state through Storage::Account, so it has to run in this
+		// deferred chain rather than in the constructor body.
+		NovaGram::Start(this);
 	} }).dispatch();
 
 #ifndef TDESKTOP_DISABLE_SPELLCHECK

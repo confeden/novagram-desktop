@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "core/sandbox.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_branding.h"
 #include "platform/win/windows_app_user_model_id.h"
 #include "platform/win/windows_taskbar_buttons.h"
 #include "platform/win/tray_win.h"
@@ -119,7 +120,8 @@ void WindowsIntegration::refreshCustomJumpList() {
 		}
 		auto titlePropVar = PROPVARIANT();
 		hr = InitPropVariantFromString(
-			tr::lng_quit_from_tray(tr::now).toStdWString().c_str(),
+			NovaGram::WithAppName(
+				tr::lng_quit_from_tray(tr::now)).toStdWString().c_str(),
 			&titlePropVar);
 		if (SUCCEEDED(hr)) {
 			hr = propertyStore->SetValue(PKEY_Title, titlePropVar);

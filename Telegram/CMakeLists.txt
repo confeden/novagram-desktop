@@ -1571,6 +1571,24 @@ PRIVATE
     mtproto/special_config_request.cpp
     mtproto/special_config_request.h
     mtproto/type_utils.h
+
+    novagram/nova_autodelete.cpp
+    novagram/nova_autodelete.h
+    novagram/nova_branding.cpp
+    novagram/nova_branding.h
+    novagram/nova_keypad.cpp
+    novagram/nova_keypad.h
+    novagram/nova_night_silent.cpp
+    novagram/nova_night_silent.h
+    novagram/nova_pin.cpp
+    novagram/nova_pin.h
+    novagram/nova_pin_box.cpp
+    novagram/nova_pin_box.h
+    novagram/nova_screen_guard.cpp
+    novagram/nova_screen_guard.h
+    novagram/nova_settings.cpp
+    novagram/nova_settings.h
+
     overview/overview_checkbox.cpp
     overview/overview_checkbox.h
     overview/overview_layout.cpp

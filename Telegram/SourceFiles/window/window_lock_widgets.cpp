@@ -11,6 +11,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "base/system_unlock.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_keypad.h"
+#include "novagram/nova_pin.h"
 #include "storage/storage_domain.h"
 #include "mainwindow.h"
 #include "core/application.h"
@@ -108,8 +110,16 @@ PasscodeLockWidget::PasscodeLockWidget(
 		window->showLogoutConfirmation();
 	});
 
+	_novaPinMode = NovaGram::PinModeEnabled();
+	if (_novaPinMode) {
+		setupNovaPinMode();
+	}
+
 	using namespace rpl::mappers;
-	if (Core::App().settings().systemUnlockEnabled()) {
+	// The system unlock would let anyone who can pass Windows Hello in and
+	// skip the emergency pin check altogether, which defeats the whole point
+	// of the NovaGram pin, so in that mode it is never even offered.
+	if (!_novaPinMode && Core::App().settings().systemUnlockEnabled()) {
 		_systemUnlockAvailable = base::SystemUnlockStatus(
 			true
 		) | rpl::map([](base::SystemUnlockAvailability status) {
@@ -128,6 +138,52 @@ PasscodeLockWidget::PasscodeLockWidget(
 			setupSystemUnlockInfo();
 		}
 	}
+}
+
+void PasscodeLockWidget::setupNovaPinMode() {
+	_passcode->setEchoMode(QLineEdit::NoEcho);
+	_passcode->setMaxLength(NovaGram::kMaxPinLength);
+	_passcode->setPlaceholder(rpl::single(NovaGram::PinPlaceholder()));
+	_submit->setText(rpl::single(NovaGram::SubmitButton()));
+
+	_novaHint = Ui::CreateChild<Ui::FlatLabel>(
+		this,
+		NovaGram::HiddenInputHint(),
+		st::passcodeSystemUnlockLater);
+	if (NovaGram::ShuffledKeypadEnabled()) {
+		_novaKeypad = Ui::CreateChild<NovaGram::PinKeypad>(
+			this,
+			NovaGram::PinKeypad::Descriptor{
+				.digit = [=](QChar digit) {
+					_passcode->setText(_passcode->text() + digit);
+					_passcode->setFocusFast();
+				},
+				.backspace = [=] {
+					const auto text = _passcode->text();
+					if (!text.isEmpty()) {
+						_passcode->setText(text.mid(0, text.size() - 1));
+					}
+					_passcode->setFocusFast();
+				},
+				.submit = [=] { submit(); },
+			});
+	}
+	_novaLockoutTimer.setCallback([=] { refreshNovaLockout(); });
+	refreshNovaLockout();
+}
+
+void PasscodeLockWidget::refreshNovaLockout() {
+	if (!_novaPinMode) {
+		return;
+	}
+	const auto remaining = NovaGram::LockoutRemaining();
+	if (remaining <= 0) {
+		_novaLockoutTimer.cancel();
+		return;
+	}
+	_error = NovaGram::LockoutMessage(remaining);
+	_novaLockoutTimer.callOnce(1000);
+	update();
 }
 
 void PasscodeLockWidget::setupSystemUnlockInfo() {
@@ -248,7 +304,10 @@ void PasscodeLockWidget::paintContent(QPainter &p) {
 
 	p.setFont(st::passcodeHeaderFont);
 	p.setPen(st::windowFg);
-	p.drawText(QRect(0, _passcode->y() - st::passcodeHeaderHeight, width(), st::passcodeHeaderHeight), tr::lng_passcode_enter(tr::now), style::al_center);
+	const auto header = _novaPinMode
+		? NovaGram::UnlockTitle()
+		: tr::lng_passcode_enter(tr::now);
+	p.drawText(QRect(0, _passcode->y() - st::passcodeHeaderHeight, width(), st::passcodeHeaderHeight), header, style::al_center);
 
 	if (!_error.isEmpty()) {
 		p.setFont(st::boxTextFont);
@@ -262,6 +321,11 @@ void PasscodeLockWidget::submit() {
 		_passcode->showError();
 		return;
 	}
+	if (_novaPinMode && NovaGram::LockoutRemaining() > 0) {
+		refreshNovaLockout();
+		_passcode->showError();
+		return;
+	}
 	if (!passcodeCanTry()) {
 		_error = tr::lng_flood_error(tr::now);
 		_passcode->showError();
@@ -269,7 +333,13 @@ void PasscodeLockWidget::submit() {
 		return;
 	}
 
-	const auto passcode = _passcode->text().toUtf8();
+	const auto entered = _passcode->text();
+	if (_novaPinMode && NovaGram::CheckEmergencyPin(entered)) {
+		NovaGram::RunEmergencyWipe(); // May destroy this widget.
+		return;
+	}
+
+	const auto passcode = entered.toUtf8();
 	auto &domain = Core::App().domain();
 	const auto correct = domain.started()
 		? domain.local().checkPasscode(passcode)
@@ -277,18 +347,37 @@ void PasscodeLockWidget::submit() {
 	if (!correct) {
 		cSetPasscodeBadTries(cPasscodeBadTries() + 1);
 		cSetPasscodeLastTry(crl::now());
+		if (_novaPinMode) {
+			NovaGram::RecordFailedAttempt();
+		}
 		error();
 		return;
+	}
+	if (_novaPinMode) {
+		NovaGram::ResetFailedAttempts();
 	}
 
 	Core::App().unlockPasscode(); // Destroys this widget.
 }
 
 void PasscodeLockWidget::error() {
-	_error = tr::lng_passcode_wrong(tr::now);
-	_passcode->selectAll();
+	if (_novaPinMode) {
+		// Upstream keeps the wrong value selected so that typing replaces it,
+		// but a keypad click appends instead of replacing, so the field is
+		// cleared here before the message is set.
+		_passcode->setText(QString());
+	} else {
+		_passcode->selectAll();
+	}
+	_error = _novaPinMode
+		? NovaGram::WrongPin()
+		: tr::lng_passcode_wrong(tr::now);
 	_passcode->showError();
+	if (_novaKeypad) {
+		_novaKeypad->shuffle();
+	}
 	update();
+	refreshNovaLockout();
 }
 
 void PasscodeLockWidget::changed() {
@@ -296,12 +385,41 @@ void PasscodeLockWidget::changed() {
 		_error = QString();
 		update();
 	}
+	refreshNovaLockout();
 }
 
 void PasscodeLockWidget::resizeEvent(QResizeEvent *e) {
-	_passcode->move((width() - _passcode->width()) / 2, (height() / 3));
-	_submit->move(_passcode->x(), _passcode->y() + _passcode->height() + st::passcodeSubmitSkip);
+	if (_novaKeypad) {
+		_novaKeypad->resizeToWidth(_passcode->width());
+	}
+	const auto keypadSkip = _novaKeypad
+		? (_novaKeypad->height() + st::passcodeSubmitSkip)
+		: 0;
+	const auto contentHeight = _passcode->height()
+		+ st::passcodeSubmitSkip
+		+ keypadSkip
+		+ _submit->height();
+	const auto top = _novaKeypad
+		? std::max((height() - contentHeight) / 2, st::passcodeHeaderHeight)
+		: (height() / 3);
+	_passcode->move((width() - _passcode->width()) / 2, top);
+	auto below = _passcode->y() + _passcode->height() + st::passcodeSubmitSkip;
+	if (_novaKeypad) {
+		_novaKeypad->move(_passcode->x(), below);
+		below += _novaKeypad->height() + st::passcodeSubmitSkip;
+	}
+	_submit->move(_passcode->x(), below);
 	_logout->move(_passcode->x() + (_passcode->width() - _logout->width()) / 2, _submit->y() + _submit->height() + st::linkFont->ascent);
+	if (_novaHint) {
+		_novaHint->resizeToWidth(width()
+			- st::boxRowPadding.left()
+			- st::boxRowPadding.right());
+		_novaHint->moveToLeft(
+			st::boxRowPadding.left(),
+			_logout->y()
+				+ _logout->height()
+				+ st::passcodeSystemUnlockSkip);
+	}
 }
 
 void PasscodeLockWidget::setInnerFocus() {

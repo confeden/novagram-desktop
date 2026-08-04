@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "novagram/nova_night_silent.h"
 #include "main/main_session_settings.h"
 #include "menu/menu_sponsored.h"
 #include "platform/platform_notifications_manager.h"
@@ -622,6 +623,7 @@ bool ShouldSendSilent(
 		not_null<PeerData*> peer,
 		const Api::SendOptions &options) {
 	return options.silent
+		|| NovaGram::NightSilentActive(peer)
 		|| (peer->isBroadcast()
 			&& peer->owner().notifySettings().silentPosts(peer))
 		|| (peer->session().supportMode()

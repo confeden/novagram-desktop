@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_icon.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "novagram/nova_pin.h"
 #include "settings/cloud_password/settings_cloud_password_common.h"
 #include "settings/cloud_password/settings_cloud_password_step.h"
 #include "settings/settings_builder.h"
@@ -558,8 +559,14 @@ void BuildManageContent(SectionBuilder &builder) {
 
 		}, systemUnlockContent->lifetime());
 
+		// In the NovaGram pin mode the system unlock is never offered on the
+		// lock screen, because it would skip the emergency pin check, so the
+		// switch that turns it on is not shown either.
 		systemUnlockWrap->toggleOn(unlockType->value(
-		) | rpl::map(rpl::mappers::_1 != UnlockType::None));
+		) | rpl::map(rpl::mappers::_1 != UnlockType::None
+		) | rpl::map([](bool available) {
+			return available && !NovaGram::PinModeEnabled();
+		}));
 
 		return SectionBuilder::WidgetToAdd{};
 	}, [] {
