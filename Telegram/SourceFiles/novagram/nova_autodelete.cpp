@@ -171,6 +171,7 @@ public:
 	void change(Fn<void(State&)> mutation);
 
 	void track(not_null<HistoryItem*> item);
+	[[nodiscard]] TimeId dueAt(FullMsgId id) const;
 
 private:
 	void schedule();
@@ -218,6 +219,13 @@ Runner::Runner(not_null<Main::Session*> session)
 	}, _session->lifetime());
 
 	_timer.callOnce(kStartupDelay);
+}
+
+TimeId Runner::dueAt(FullMsgId id) const {
+	const auto i = ranges::find_if(_state.queue, [&](const Entry &e) {
+		return (e.peerId == id.peer) && (e.msgId == id.msg);
+	});
+	return (i != end(_state.queue)) ? i->dueAt : 0;
 }
 
 void Runner::change(Fn<void(State&)> mutation) {
@@ -477,6 +485,41 @@ bool AppliesTo(not_null<PeerData*> peer) {
 	case PeerRule::Default: return AppliesByDefault(peer);
 	}
 	return false;
+}
+
+TimeId DueIn(not_null<HistoryItem*> item) {
+	const auto session = &item->history()->session();
+	const auto runner = Find(session);
+	if (!runner) {
+		return 0;
+	}
+	const auto dueAt = runner->dueAt(item->fullId());
+	if (!dueAt) {
+		return 0;
+	}
+	const auto left = dueAt - base::unixtime::now();
+	return (left > 0) ? left : TimeId(1);
+}
+
+QString CountdownText(not_null<HistoryItem*> item) {
+	const auto left = DueIn(item);
+	if (!left) {
+		return QString();
+	}
+	const auto russian = UseRussianTexts();
+	const auto days = left / 86400;
+	const auto hours = (left % 86400) / 3600;
+	const auto minutes = (left % 3600) / 60;
+	auto parts = QStringList();
+	if (days > 0) {
+		parts.push_back(QString::number(days) + (russian ? u" д"_q : u"d"_q));
+	}
+	if (days > 0 || hours > 0) {
+		parts.push_back(QString::number(hours) + (russian ? u" ч"_q : u"h"_q));
+	}
+	parts.push_back(QString::number(minutes) + (russian ? u" м"_q : u"m"_q));
+	return (russian ? u"Удалится через: "_q : u"Deletes in: "_q)
+		+ parts.join(QChar(' '));
 }
 
 void Start(not_null<Main::Session*> session) {

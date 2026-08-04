@@ -48,6 +48,12 @@ void SetReplacement(not_null<Main::Session*> session, const QString &text);
 void SetRuleFor(not_null<PeerData*> peer, PeerRule rule);
 [[nodiscard]] bool AppliesTo(not_null<PeerData*> peer);
 
+// Seconds left before the message is processed, 0 when it is not tracked.
+[[nodiscard]] TimeId DueIn(not_null<HistoryItem*> item);
+
+// "Удалится через: 3 д 23 ч 16 м", empty when the message is not tracked.
+[[nodiscard]] QString CountdownText(not_null<HistoryItem*> item);
+
 // Starts the per-session scheduler, safe to call more than once.
 void Start(not_null<Main::Session*> session);
 
