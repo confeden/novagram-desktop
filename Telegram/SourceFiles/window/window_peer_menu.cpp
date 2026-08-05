@@ -67,6 +67,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_ttl_validator.h"
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_erase.h"
+#include "novagram/nova_read_status.h"
 #include "apiwrap.h"
 #include "mainwidget.h"
 #include "api/api_blocked_peers.h"
@@ -330,6 +331,7 @@ private:
 	void addCreateTodoList();
 	void addThemeEdit();
 	void addNovaAutoDelete();
+	void addNovaReadStatus();
 	void addNovaEraseEvidence();
 	void addToggleNoForwards();
 	void addBlockUser();
@@ -1559,6 +1561,19 @@ void Filler::addNovaAutoDelete() {
 	}, (applies ? &st::menuIconCancel : &st::menuIconClear));
 }
 
+void Filler::addNovaReadStatus() {
+	if (!_peer || !NovaGram::ReadStatusHiddenFor(_peer)) {
+		return;
+	}
+	const auto peer = _peer;
+	const auto show = _controller->uiShow();
+	_addAction(NovaGram::ReadStatusTitle(), [=] {
+		show->showBox(Box([=](not_null<Ui::GenericBox*> box) {
+			NovaGram::ReadStatusBox(box, peer);
+		}));
+	}, &st::menuIconMarkRead);
+}
+
 void Filler::addNovaEraseEvidence() {
 	if (!_peer) {
 		return;
@@ -1934,6 +1949,7 @@ void Filler::fillHistoryActions() {
 	addCreateTodoList();
 	addThemeEdit();
 	addNovaAutoDelete();
+	addNovaReadStatus();
 	addNovaEraseEvidence();
 	addToggleNoForwards();
 	addViewDiscussion();

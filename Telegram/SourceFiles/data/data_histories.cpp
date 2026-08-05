@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/random.h"
 #include "main/main_session.h"
+#include "novagram/nova_read_status.h"
 #include "window/notifications_manager.h"
 #include "history/history.h"
 #include "history/history_item.h"
@@ -271,6 +272,13 @@ void Histories::readInboxTill(
 	});
 
 	Core::App().notifications().clearIncomingFromHistory(history);
+
+	if (NovaGram::ReadStatusHidden(history)) {
+		// Returning here still runs syncGuard above, so the dialog looks read
+		// locally while nothing about it reaches the server.
+		DEBUG_LOG(("Reading: hidden by NovaGram."));
+		return;
+	}
 
 	const auto needsRequest = history->readInboxTillNeedsRequest(tillId);
 	if (!needsRequest && !force) {

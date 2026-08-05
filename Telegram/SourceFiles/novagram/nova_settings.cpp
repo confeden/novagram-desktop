@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_night_silent.h"
 #include "novagram/nova_pin.h"
 #include "novagram/nova_pin_box.h"
+#include "novagram/nova_read_status.h"
 #include "novagram/nova_screen_guard.h"
 #include "settings/settings_common_session.h"
 #include "ui/layers/generic_box.h"
@@ -259,6 +260,41 @@ void FillAutoDelete(
 	Ui::AddDividerText(container, rpl::single(AutoDeleteAbout()));
 }
 
+[[nodiscard]] QString ReadStatusAbout() {
+	return UseRussianTexts()
+		? u"В диалогах, которые начали не вы, NovaGram не сообщает "
+			"собеседнику о прочтении: галочки прочтения у него не "
+			"появляются. Настройка применяется только к новым диалогам, "
+			"уже существующие переписки не затрагиваются.\n\nПобочный эффект: "
+			"для Telegram сообщения остаются непрочитанными, поэтому счётчик "
+			"непрочитанного может возвращаться после перезапуска и на других "
+			"устройствах. Отключить скрытие можно в меню конкретного диалога, "
+			"и это необратимо."_q
+		: u"In dialogs you did not start, NovaGram does not tell the other "
+			"side that you read them: the read marks never appear for them. "
+			"This applies to new dialogs only, existing conversations are "
+			"left alone.\n\nSide effect: for Telegram the messages stay "
+			"unread, so the unread counter can come back after a restart and "
+			"on other devices. Hiding can be turned off from the menu of a "
+			"particular dialog, and that cannot be undone."_q;
+}
+
+void FillReadStatus(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller) {
+	const auto session = &controller->session();
+
+	Ui::AddSkip(container);
+	AddToggle(
+		container,
+		ReadStatusTitle(),
+		ReadStatusEnabled(session),
+		[=](bool toggled) { SetReadStatusEnabled(session, toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(ReadStatusAbout()));
+}
+
 void FillSending(not_null<Ui::VerticalLayout*> container) {
 	const auto russian = UseRussianTexts();
 
@@ -340,6 +376,7 @@ void NovaGramSection::setupContent() {
 		Ui::AddSkip(container);
 		FillProtection(container, controller);
 		FillAutoDelete(container, controller);
+		FillReadStatus(container, controller);
 		FillSending(container);
 		Ui::AddSkip(container);
 	});

@@ -1578,6 +1578,8 @@ PRIVATE
     novagram/nova_branding.h
     novagram/nova_erase.cpp
     novagram/nova_erase.h
+    novagram/nova_read_status.cpp
+    novagram/nova_read_status.h
     novagram/nova_keypad.cpp
     novagram/nova_keypad.h
     novagram/nova_night_silent.cpp

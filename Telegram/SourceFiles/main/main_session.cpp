@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/session/send_as_peers.h"
 #include "mtproto/mtproto_config.h"
 #include "novagram/nova_autodelete.h"
+#include "novagram/nova_read_status.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
 #include "chat_helpers/stickers_gift_box_pack.h"
@@ -253,6 +254,7 @@ Session::Session(
 		// Reads its state through Storage::Account, so it has to run in this
 		// deferred chain rather than in the constructor body.
 		NovaGram::Start(this);
+		NovaGram::StartReadStatus(this);
 	} }).dispatch();
 
 #ifndef TDESKTOP_DISABLE_SPELLCHECK
