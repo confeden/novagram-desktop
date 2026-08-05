@@ -57,6 +57,13 @@ void SetRuleFor(not_null<PeerData*> peer, PeerRule rule);
 // Starts the per-session scheduler, safe to call more than once.
 void Start(not_null<Main::Session*> session);
 
+// Queues the given messages for immediate destruction, ignoring the enabled
+// flag and the per-chat rules: this serves the manual Erase evidence command,
+// which is an explicit order rather than a policy.
+void EnqueueNow(
+	not_null<Main::Session*> session,
+	const std::vector<FullMsgId> &ids);
+
 [[nodiscard]] QString SettingsTitle();
 [[nodiscard]] QString SettingsLabel(not_null<Main::Session*> session);
 [[nodiscard]] QString FormatPeriod(int hours);

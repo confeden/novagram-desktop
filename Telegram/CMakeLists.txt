@@ -1576,6 +1576,8 @@ PRIVATE
     novagram/nova_autodelete.h
     novagram/nova_branding.cpp
     novagram/nova_branding.h
+    novagram/nova_erase.cpp
+    novagram/nova_erase.h
     novagram/nova_keypad.cpp
     novagram/nova_keypad.h
     novagram/nova_night_silent.cpp

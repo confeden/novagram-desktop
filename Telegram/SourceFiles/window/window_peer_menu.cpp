@@ -66,6 +66,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_mute.h"
 #include "menu/menu_ttl_validator.h"
 #include "novagram/nova_autodelete.h"
+#include "novagram/nova_erase.h"
 #include "apiwrap.h"
 #include "mainwidget.h"
 #include "api/api_blocked_peers.h"
@@ -329,6 +330,7 @@ private:
 	void addCreateTodoList();
 	void addThemeEdit();
 	void addNovaAutoDelete();
+	void addNovaEraseEvidence();
 	void addToggleNoForwards();
 	void addBlockUser();
 	void addViewDiscussion();
@@ -1557,6 +1559,19 @@ void Filler::addNovaAutoDelete() {
 	}, (applies ? &st::menuIconCancel : &st::menuIconClear));
 }
 
+void Filler::addNovaEraseEvidence() {
+	if (!_peer) {
+		return;
+	}
+	const auto peer = _peer;
+	const auto show = _controller->uiShow();
+	_addAction(NovaGram::EraseMenuText(), [=] {
+		show->showBox(Box([=](not_null<Ui::GenericBox*> box) {
+			NovaGram::EraseEvidenceBox(box, show, peer);
+		}));
+	}, &st::menuIconDelete);
+}
+
 void Filler::addToggleNoForwards() {
 	const auto user = _peer->asUser();
 	if (!user
@@ -1919,6 +1934,7 @@ void Filler::fillHistoryActions() {
 	addCreateTodoList();
 	addThemeEdit();
 	addNovaAutoDelete();
+	addNovaEraseEvidence();
 	addToggleNoForwards();
 	addViewDiscussion();
 	addDirectMessages();

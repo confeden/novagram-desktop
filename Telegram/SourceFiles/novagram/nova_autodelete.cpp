@@ -36,6 +36,7 @@ namespace {
 constexpr auto kMagic = quint32(0x4E564144);
 constexpr auto kVersion = qint32(1);
 constexpr auto kTickInterval = crl::time(60 * 1000);
+constexpr auto kBusyInterval = crl::time(5 * 1000);
 constexpr auto kStartupDelay = crl::time(15 * 1000);
 constexpr auto kRetryDelay = TimeId(5 * 60);
 constexpr auto kPerTick = 5;
@@ -171,6 +172,7 @@ public:
 	void change(Fn<void(State&)> mutation);
 
 	void track(not_null<HistoryItem*> item);
+	void enqueueNow(const std::vector<FullMsgId> &ids);
 	[[nodiscard]] TimeId dueAt(FullMsgId id) const;
 
 private:
@@ -239,7 +241,37 @@ void Runner::schedule() {
 		_timer.cancel();
 		return;
 	}
-	_timer.callOnce(kTickInterval);
+	// With a backlog the queue is polled far more often: Erase evidence can
+	// hand over hundreds of messages at once, and a minute between batches
+	// would stretch a manual command over hours.
+	const auto now = base::unixtime::now();
+	const auto due = ranges::any_of(_state.queue, [&](const Entry &entry) {
+		return (entry.dueAt <= now);
+	});
+	_timer.callOnce(due ? kBusyInterval : kTickInterval);
+}
+
+void Runner::enqueueNow(const std::vector<FullMsgId> &ids) {
+	const auto now = base::unixtime::now();
+	auto added = false;
+	for (const auto &id : ids) {
+		const auto already = ranges::any_of(_state.queue, [&](const Entry &e) {
+			return (e.peerId == id.peer) && (e.msgId == id.msg);
+		});
+		if (already) {
+			continue;
+		}
+		_state.queue.push_back({
+			.peerId = id.peer,
+			.msgId = id.msg,
+			.dueAt = now,
+		});
+		added = true;
+	}
+	if (added) {
+		WriteState(_session, _state);
+		schedule();
+	}
 }
 
 void Runner::track(not_null<HistoryItem*> item) {
@@ -520,6 +552,14 @@ QString CountdownText(not_null<HistoryItem*> item) {
 	parts.push_back(QString::number(minutes) + (russian ? u" м"_q : u"m"_q));
 	return (russian ? u"Удалится через: "_q : u"Deletes in: "_q)
 		+ parts.join(QChar(' '));
+}
+
+void EnqueueNow(
+		not_null<Main::Session*> session,
+		const std::vector<FullMsgId> &ids) {
+	if (!ids.empty()) {
+		Get(session).enqueueNow(ids);
+	}
 }
 
 void Start(not_null<Main::Session*> session) {
