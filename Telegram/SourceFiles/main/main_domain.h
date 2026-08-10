@@ -84,6 +84,7 @@ public:
 
 private:
 	void activateAfterStarting();
+	void startDecoySessionIfNeeded();
 	void closeAccountWindows(not_null<Main::Account*> account);
 	bool removePasscodeIfEmpty();
 	void watchSession(not_null<Account*> account);

@@ -60,7 +60,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "novagram/nova_branding.h"
+#include "novagram/nova_decoy.h"
+#include "novagram/nova_pin_policy.h"
 #include "novagram/nova_screen_guard.h"
+#include "novagram/nova_update.h"
 #include "media/view/media_view_overlay_widget.h"
 #include "media/view/media_view_open_common.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -296,6 +300,10 @@ void Application::run() {
 	// Installed before any window exists, so that no window is ever shown
 	// without the capture protection already applied to it.
 	NovaGram::StartScreenGuard();
+
+	// After the settings are read, because the check is a setting, and it does
+	// nothing at all while the decoy is on.
+	NovaGram::Update::Start();
 
 	Test::ApplyStartupOverrides();
 
@@ -1303,6 +1311,8 @@ void Application::maybeLockByPasscode() {
 }
 
 void Application::unlockPasscode() {
+	// NovaGram: the moment the "ask at start" ceiling is measured from.
+	NovaGram::NotePinUnlocked();
 	clearPasscodeLock();
 	enumerateWindows([&](not_null<Window::Controller*> w) {
 		w->clearPasscodeLock();
@@ -1381,7 +1391,30 @@ void Application::checkAutoLock(crl::time lastNonIdleTime) {
 
 	checkLocalTime();
 	const auto now = crl::now();
-	const auto shouldLockInMs = settings().autoLock() * 1000LL;
+	// NovaGram: the chosen option decides whether idle time is measured at
+	// all. Three of the five do not measure it - they end the session on an
+	// event instead - and for those the stock timeout must not go on locking
+	// behind the user's back.
+	const auto novaSeconds = NovaGram::PinPolicyAutoLockSeconds();
+	if (!novaSeconds) {
+		_shouldLockAt = 0;
+		_autoLockTimer.cancel();
+		// Only "ask at start" has anything left to wait for here, and what it
+		// waits for is the ceiling on the age of the unlock. Asked for as a
+		// remaining time rather than as a yes/no, because leaving without
+		// arming anything would mean the ceiling was only ever noticed if
+		// something else happened to ask.
+		if (const auto left = NovaGram::PinSessionRemaining()) {
+			if (*left <= 0) {
+				lockByPasscode();
+			} else {
+				_shouldLockAt = now + *left;
+				_autoLockTimer.callOnce(*left);
+			}
+		}
+		return;
+	}
+	const auto shouldLockInMs = novaSeconds * 1000LL;
 	const auto checkTimeMs = now - lastNonIdleTime;
 	if (checkTimeMs >= shouldLockInMs
 		|| (_shouldLockAt > 0
@@ -1957,27 +1990,43 @@ void Application::RegisterUrlScheme() {
 		? u"-workdir \"%1\""_q.arg(cWorkingDir())
 		: QString();
 
-	base::Platform::RegisterUrlScheme(base::Platform::UrlSchemeDescriptor{
-		.executable = Platform::ExecutablePathForShortcuts(),
-		.arguments = arguments,
-		.protocol = u"tg"_q,
-		.protocolName = u"Telegram Link"_q,
-		.shortAppName = u"tdesktop"_q,
-		.longAppName = QCoreApplication::applicationName(),
-		.displayAppName = AppName.utf16(),
-		.displayAppDescription = AppName.utf16(),
-	});
+	// The visible name follows the decoy: the stock "Telegram Desktop" while it
+	// is armed, the fork name otherwise. The data-level identifiers below stay
+	// put, so the registration keeps pointing at this install either way.
+	const auto display = NovaGram::AppName();
+	const auto descriptor = [&](
+			const QString &protocol,
+			const QString &protocolName,
+			const QString &name) {
+		return base::Platform::UrlSchemeDescriptor{
+			.executable = Platform::ExecutablePathForShortcuts(),
+			.arguments = arguments,
+			.protocol = protocol,
+			.protocolName = protocolName,
+			.shortAppName = u"tdesktop"_q,
+			.longAppName = QCoreApplication::applicationName(),
+			.displayAppName = name,
+			.displayAppDescription = name,
+		};
+	};
 
-	base::Platform::RegisterUrlScheme(base::Platform::UrlSchemeDescriptor{
-		.executable = Platform::ExecutablePathForShortcuts(),
-		.arguments = arguments,
-		.protocol = u"tonsite"_q,
-		.protocolName = u"TonSite Link"_q,
-		.shortAppName = u"tdesktop"_q,
-		.longAppName = QCoreApplication::applicationName(),
-		.displayAppName = AppName.utf16(),
-		.displayAppDescription = AppName.utf16(),
-	});
+	if (NovaGram::Decoy::Active()) {
+		// An earlier ordinary run wrote the fork name into HKCU. Registering the
+		// disguised name overwrites the shared capability keys but leaves the
+		// fork-named value in RegisteredApplications (and the "open link"
+		// chooser) behind, so it is removed first — the check that guards
+		// Unregister matches only while the old name is still in place.
+		const auto fork = QString::fromUtf8(AppName.utf8());
+		base::Platform::UnregisterUrlScheme(
+			descriptor(u"tg"_q, u"Telegram Link"_q, fork));
+		base::Platform::UnregisterUrlScheme(
+			descriptor(u"tonsite"_q, u"TonSite Link"_q, fork));
+	}
+
+	base::Platform::RegisterUrlScheme(
+		descriptor(u"tg"_q, u"Telegram Link"_q, display));
+	base::Platform::RegisterUrlScheme(
+		descriptor(u"tonsite"_q, u"TonSite Link"_q, display));
 }
 
 bool IsAppLaunched() {

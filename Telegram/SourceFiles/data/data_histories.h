@@ -64,6 +64,13 @@ public:
 	void readInboxOnNewMessage(not_null<HistoryItem*> item);
 	void readClientSideMessage(not_null<HistoryItem*> item);
 	void sendPendingReadInbox(not_null<History*> history);
+
+	// NovaGram: the rule that withheld the receipts of this dialog is gone, so
+	// the receipt for the position this client already reads at has to reach
+	// the server now. Nothing else asks for it: while the rule held, the
+	// dialog was marked read locally, so every other path finds nothing to do.
+	void sendReadInboxAfterReveal(not_null<History*> history);
+
 	void reportDelivery(not_null<HistoryItem*> item);
 
 	void requestDialogEntry(not_null<Data::Folder*> folder);

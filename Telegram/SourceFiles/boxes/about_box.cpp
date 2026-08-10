@@ -13,6 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_checker.h"
 #include "core/version.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_branding.h"
+#include "novagram/nova_decoy.h"
+#include "novagram/nova_pin.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
@@ -42,16 +45,32 @@ rpl::producer<TextWithEntities> Text1() {
 }
 
 rpl::producer<TextWithEntities> Text2() {
+	// The GitHub line is the one place in the about box where a user looks for
+	// "where does this come from", so outside the decoy it points at the fork.
+	// The licence stays upstream's: it is upstream's licence.
+	const auto github = NovaGram::Decoy::Active()
+		? u"https://github.com/telegramdesktop/tdesktop"_q
+		: NovaGram::ProjectUrl();
 	return tr::lng_about_text2(
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
 			"https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE")),
 		lt_github_link,
-		rpl::single(tr::link(
-			"GitHub",
-			"https://github.com/telegramdesktop/tdesktop")),
+		rpl::single(tr::link("GitHub", github)),
 		tr::marked);
+}
+
+// One line under the version, only outside the decoy. NovaGram releases both
+// platforms as one release, so its tag carries two numbers and neither client
+// can show the other one from anything it knows: this line is where the whole
+// tag is spelled out.
+[[nodiscard]] rpl::producer<TextWithEntities> ReleaseText() {
+	return rpl::single(TextWithEntities{
+		(NovaGram::UseRussianTexts()
+			? u"NovaGram, релиз "_q
+			: u"NovaGram, release "_q) + NovaGram::ReleaseTag(),
+	});
 }
 
 rpl::producer<TextWithEntities> Text3() {
@@ -64,7 +83,10 @@ rpl::producer<TextWithEntities> Text3() {
 } // namespace
 
 void AboutBox(not_null<Ui::GenericBox*> box) {
-	box->setTitle(u"Telegram Desktop"_q);
+	const auto decoy = NovaGram::Decoy::Active();
+	// AppName() already returns the stock "Telegram Desktop" while the decoy is
+	// armed, so the title needs no separate decoy branch.
+	box->setTitle(NovaGram::AppName());
 
 	auto layout = box->verticalLayout();
 
@@ -82,7 +104,9 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 			st::boxRowPadding.right(),
 			st::boxRowPadding.bottom()));
 	version->setClickedCallback([=] {
-		if (cRealAlphaVersion()) {
+		if (!decoy) {
+			File::OpenUrl(NovaGram::ReleaseUrl());
+		} else if (cRealAlphaVersion()) {
 			auto url = u"https://tdesktop.com/"_q;
 			if (Platform::IsWindows32Bit()) {
 				url += u"win/%1.zip"_q;
@@ -123,6 +147,9 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 		Ui::AddSkip(layout, st::aboutSkip);
 	};
 
+	if (!decoy) {
+		addText(ReleaseText());
+	}
 	addText(Text1());
 	addText(Text2());
 	addText(Text3());

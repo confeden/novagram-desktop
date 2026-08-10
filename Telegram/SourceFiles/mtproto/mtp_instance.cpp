@@ -26,6 +26,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "base/timer.h"
 #include "base/network_reachability.h"
+#include "novagram/nova_decoy.h"
+#include "novagram/nova_decoy_server.h"
 
 namespace MTP {
 namespace {
@@ -129,6 +131,10 @@ public:
 		crl::time msCanWait,
 		bool needsLayer,
 		mtpRequestId afterRequestId);
+	void answerOffline(
+		mtpRequestId requestId,
+		const SerializedRequest &request,
+		ResponseHandler &&callbacks);
 	void registerRequest(mtpRequestId requestId, ShiftedDcId shiftedDcId);
 	void unregisterRequest(mtpRequestId requestId);
 	void storeRequest(
@@ -373,6 +379,15 @@ Instance::Private::Private(
 }
 
 void Instance::Private::start() {
+	if (NovaGram::Decoy::Active()) {
+		// No session and no config loader while the decoy is on. A session
+		// opens a socket to a datacenter the moment it exists, and the config
+		// loader falls back to public DNS resolvers over HTTPS, so blocking
+		// requests alone would still leave the application talking to
+		// Telegram and to Google.
+		_checkDelayedTimer.setCallback([this] { checkDelayedRequests(); });
+		return;
+	}
 	if (isKeysDestroyer()) {
 		for (const auto &[shiftedDcId, dc] : _dcenters) {
 			startSession(shiftedDcId);
@@ -388,6 +403,9 @@ void Instance::Private::start() {
 }
 
 void Instance::Private::resolveProxyDomain(const QString &host) {
+	if (NovaGram::Decoy::Active()) {
+		return;
+	}
 	if (!_domainResolver) {
 		_domainResolver = std::make_unique<DomainResolver>([=](
 				const QString &host,
@@ -511,7 +529,7 @@ rpl::producer<DcId> Instance::Private::mainDcIdValue() const {
 }
 
 void Instance::Private::requestConfig() {
-	if (_configLoader || isKeysDestroyer()) {
+	if (_configLoader || isKeysDestroyer() || NovaGram::Decoy::Active()) {
 		return;
 	}
 	_configLoader = std::make_unique<ConfigLoader>(
@@ -541,7 +559,9 @@ void Instance::Private::badConfigurationError() {
 }
 
 void Instance::Private::syncHttpUnixtime() {
-	if (base::unixtime::http_valid() || _httpUnixtimeLoader) {
+	if (base::unixtime::http_valid()
+		|| _httpUnixtimeLoader
+		|| NovaGram::Decoy::Active()) {
 		return;
 	}
 	_httpUnixtimeLoader = std::make_unique<SpecialConfigRequest>([=] {
@@ -620,6 +640,12 @@ void Instance::Private::restart(ShiftedDcId shiftedDcId) {
 }
 
 int32 Instance::Private::dcstate(ShiftedDcId shiftedDcId) {
+	if (NovaGram::Decoy::Active()) {
+		// There is no session to ask, and reporting anything but connected
+		// would put "Connecting..." over the chat list, which is the first
+		// thing that would give the decoy away.
+		return ConnectedState;
+	}
 	if (!shiftedDcId) {
 		Assert(_mainSession != nullptr);
 		return _mainSession->getState();
@@ -637,6 +663,9 @@ int32 Instance::Private::dcstate(ShiftedDcId shiftedDcId) {
 }
 
 QString Instance::Private::dctransport(ShiftedDcId shiftedDcId) {
+	if (NovaGram::Decoy::Active()) {
+		return QString();
+	}
 	if (!shiftedDcId) {
 		Assert(_mainSession != nullptr);
 		return _mainSession->transport();
@@ -653,6 +682,9 @@ QString Instance::Private::dctransport(ShiftedDcId shiftedDcId) {
 }
 
 void Instance::Private::ping() {
+	if (NovaGram::Decoy::Active()) {
+		return;
+	}
 	getSession(0)->ping();
 }
 
@@ -1016,6 +1048,14 @@ void Instance::Private::sendRequest(
 		crl::time msCanWait,
 		bool needsLayer,
 		mtpRequestId afterRequestId) {
+	if (NovaGram::Decoy::Active()) {
+		// Before getSession on purpose: asking for a session would create the
+		// transport and start connecting, and the promise that the decoy never
+		// reaches Telegram is kept at this boundary rather than by hoping
+		// there is nothing to connect to.
+		answerOffline(requestId, request, std::move(callbacks));
+		return;
+	}
 	const auto session = getSession(shiftedDcId);
 
 	request->requestId = requestId;
@@ -1046,6 +1086,33 @@ void Instance::Private::sendRequest(
 	}
 
 	session->sendPrepared(request, msCanWait);
+}
+
+void Instance::Private::answerOffline(
+		mtpRequestId requestId,
+		const SerializedRequest &request,
+		ResponseHandler &&callbacks) {
+	const auto body = request->constData()
+		+ SerializedRequest::kMessageBodyPosition;
+	const auto end = request->constData() + request->size();
+	auto reply = NovaGram::Decoy::Respond(body, end);
+	if (reply.isEmpty()) {
+		// Dropped, and nothing is stored for it: a request that never comes
+		// back must not keep its callbacks alive for the rest of the run.
+		return;
+	}
+	request->requestId = requestId;
+	storeRequest(requestId, request, std::move(callbacks));
+
+	// Responses reach the client on the main thread, and requests are sent
+	// from more than one, so the answer takes the same road a real one does.
+	const auto instance = _instance;
+	crl::on_main(instance, [=, reply = std::move(reply)]() mutable {
+		instance->processCallback({
+			.reply = std::move(reply),
+			.requestId = requestId,
+		});
+	});
 }
 
 void Instance::Private::registerRequest(
@@ -2115,6 +2182,10 @@ void Instance::sendRequest(
 }
 
 void Instance::sendAnything(ShiftedDcId shiftedDcId, crl::time msCanWait) {
+	if (NovaGram::Decoy::Active()) {
+		// There is no session to nudge, and asking for one would create it.
+		return;
+	}
 	_private->getSession(shiftedDcId)->sendAnything(msCanWait);
 }
 

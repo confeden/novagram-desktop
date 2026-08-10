@@ -227,10 +227,14 @@ void EraseEvidenceBox(
 					history,
 					since);
 				collector->start([=](int found) {
+					// Only the start of the work: the queue reports what it
+					// actually did once it is through, in its own toast.
 					show->showToast(found
 						? (russian
-							? u"В очередь на уничтожение: %1"_q
-							: u"Queued for destruction: %1"_q).arg(found)
+							? u"В очередь на уничтожение: %1. Итог придёт, "
+								"когда очередь дойдёт до конца."_q
+							: u"Queued for destruction: %1. The result follows "
+								"once the queue is through."_q).arg(found)
 						: (russian
 							? u"Ваших сообщений за этот период не найдено"_q
 							: u"No messages of yours in this period"_q));

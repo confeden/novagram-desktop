@@ -623,7 +623,7 @@ bool ShouldSendSilent(
 		not_null<PeerData*> peer,
 		const Api::SendOptions &options) {
 	return options.silent
-		|| NovaGram::NightSilentActive(peer)
+		|| NovaGram::NightSilentActive(peer, options.scheduled)
 		|| (peer->isBroadcast()
 			&& peer->owner().notifySettings().silentPosts(peer))
 		|| (peer->session().supportMode()

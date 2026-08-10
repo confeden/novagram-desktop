@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "main/main_domain.h"
+#include "novagram/nova_decoy.h"
 #include "novagram/nova_keypad.h"
 #include "novagram/nova_pin.h"
 #include "settings.h"
@@ -314,6 +315,13 @@ void EnterBox(not_null<Ui::GenericBox*> box, EnterMode mode) {
 } // namespace
 
 void SuggestPinSetup(not_null<Window::SessionController*> controller) {
+	// The only modal that names the fork out loud. It must never surface in the
+	// decoy: the wipe removes both the primary pin and tdata/settings, so
+	// neither guard below would hold on the next launch, and the box would greet
+	// whoever opened the decoy with a title that spells NovaGram.
+	if (Decoy::Active()) {
+		return;
+	}
 	if (HasPrimaryPin()
 		|| Core::App().settings().readPref<bool>(kPromptAnsweredKey, false)) {
 		return;

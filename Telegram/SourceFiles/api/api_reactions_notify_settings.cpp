@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "apiwrap.h"
 #include "main/main_session.h"
+#include "novagram/nova_notify_previews.h"
 
 namespace Api {
 namespace {
@@ -81,6 +82,11 @@ void ReactionsNotifySettings::setAllFrom(ReactionsNotifyFrom value) {
 
 void ReactionsNotifySettings::updateShowPreviews(bool value) {
 	_showPreviews = value;
+	// NovaGram: this is the user saying what they want to see on this screen,
+	// and it is the only place that says it. While the promise is on the
+	// server holds false whatever the user chose, so the answer cannot be read
+	// back from it at the next start - it is remembered here instead.
+	NovaGram::NoteReactionsSenderShown(_session, value);
 	save();
 }
 
@@ -140,7 +146,20 @@ void ReactionsNotifySettings::apply(
 	_pollVotesFrom = pollVotes
 		? ParseFrom(*pollVotes)
 		: ReactionsNotifyFrom::None;
-	_showPreviews = mtpIsTrue(data.vshow_previews());
+	// NovaGram: read out of `data` before anything else, and before the call
+	// below. That call reaches into novagram/nova_notify_previews, which can
+	// answer by asking for a save() there and then - and a save() sends this
+	// field. Assigning it afterwards would repair the member only after the
+	// wrong value had already gone to the server.
+	_sound = data.vsound();
+	// NovaGram: the local value is not a copy of the server one while the
+	// promise is on, because the false the server holds was put there to keep
+	// that promise - by this client or by the Android one. Storing it back
+	// would blank the name of whoever reacted on this screen too, which is a
+	// different setting and one the user did not ask for.
+	_showPreviews = NovaGram::LocalReactionsPreviews(
+		_session,
+		mtpIsTrue(data.vshow_previews()));
 }
 
 void ReactionsNotifySettings::save() {
@@ -172,8 +191,11 @@ void ReactionsNotifySettings::save() {
 			((pollVotes != ReactionsNotifyFrom::None)
 				? SerializeFrom(pollVotes)
 				: MTPReactionNotificationsFrom()),
-			MTP_notificationSoundDefault(),
-			MTP_bool(previews))
+			// NovaGram: the sound the server last reported, not the default.
+			_sound,
+			// NovaGram: see the comment in apply(). The account is told to
+			// keep the text out of push whatever the local answer is.
+			MTP_bool(NovaGram::ReactionsPreviewsToSend(_session, previews)))
 	)).done([=](const MTPReactionsNotifySettings &result) {
 		_requestId = 0;
 		apply(result);

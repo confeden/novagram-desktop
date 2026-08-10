@@ -58,6 +58,9 @@ public:
 	std::optional<TimeId> muteUntil() const;
 	std::optional<bool> silentPosts() const;
 	std::optional<NotifySound> sound() const;
+	// NovaGram: whether this peer carries a show_previews of its own, which
+	// overrides the account scope. Read by novagram/nova_notify_previews.
+	std::optional<bool> showPreviews() const;
 	MTPinputPeerNotifySettings serialize() const;
 
 	~PeerNotifySettings();

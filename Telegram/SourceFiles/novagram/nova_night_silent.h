@@ -27,7 +27,12 @@ void SetNightSilentForGroups(bool enabled);
 void SetNightSilentForChannels(bool enabled);
 
 [[nodiscard]] bool NightSilentHourNow();
-[[nodiscard]] bool NightSilentActive(not_null<PeerData*> peer);
+
+// A scheduled message is judged by the hour it is due: the flag reaches the
+// server together with the schedule and is never recomputed afterwards.
+[[nodiscard]] bool NightSilentActive(
+	not_null<PeerData*> peer,
+	TimeId scheduled = 0);
 
 [[nodiscard]] QString NightSilentTitle();
 

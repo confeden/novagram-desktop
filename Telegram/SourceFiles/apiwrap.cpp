@@ -99,6 +99,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/toast/toast.h"
 #include "support/support_helper.h"
+#include "novagram/nova_notify_previews.h"
+#include "novagram/nova_read_status.h"
 #include "settings/sections/settings_premium.h"
 #include "storage/localimageloader.h"
 #include "storage/download_manager_mtproto.h"
@@ -1437,7 +1439,17 @@ void ApiWrap::markContentsRead(
 		QVector<MTPint>>();
 	markedIds.reserve(items.size());
 	for (const auto &item : items) {
-		if (!item->markContentsRead(true) || !item->isRegular()) {
+		if (NovaGram::ReadStatusPending(item->history())) {
+			// Not marked even locally, so the next pass over the visible area
+			// offers the item again once the dialog has been decided.
+			continue;
+		} else if (!item->markContentsRead(true) || !item->isRegular()) {
+			continue;
+		} else if (NovaGram::ReadStatusHidden(item->history())) {
+			// Locally read, silent towards the server: this request takes the
+			// "not listened yet" dot away from the other side and starts the
+			// countdown of a self destructing photo, which is exactly what
+			// this dialog was promised would not happen.
 			continue;
 		}
 		if (const auto channel = item->history()->peer->asChannel()) {
@@ -1462,7 +1474,13 @@ void ApiWrap::markContentsRead(
 }
 
 void ApiWrap::markContentsRead(not_null<HistoryItem*> item) {
-	if (!item->markContentsRead(true) || !item->isRegular()) {
+	if (NovaGram::ReadStatusPending(item->history())) {
+		// Left untouched, so it is offered again once the dialog is decided.
+		return;
+	} else if (!item->markContentsRead(true) || !item->isRegular()) {
+		return;
+	} else if (NovaGram::ReadStatusHidden(item->history())) {
+		// Read locally only, for the same reason as in the batch above.
 		return;
 	}
 	const auto ids = MTP_vector<MTPint>(1, MTP_int(item->id));
@@ -2087,12 +2105,19 @@ void ApiWrap::updateNotifySettingsDelayed(Data::DefaultNotify type) {
 
 void ApiWrap::sendNotifySettingsUpdates() {
 	_updateNotifyQueueLifetime.destroy();
+	// NovaGram: every notify settings value that reaches the server passes
+	// through here, and each of them carries show_previews. While the promise
+	// is on, that field goes out as false whatever the rest of the value says,
+	// so that the servers never compose the text of a push notification.
+	const auto withheld = [&](const MTPinputPeerNotifySettings &settings) {
+		return NovaGram::WithheldNotifyPreviews(_session, settings);
+	};
 	for (const auto &topic : base::take(_updateNotifyTopics)) {
 		request(MTPaccount_UpdateNotifySettings(
 			MTP_inputNotifyForumTopic(
 				topic->peer()->input(),
 				MTP_int(topic->rootId())),
-			topic->notify().serialize()
+			withheld(topic->notify().serialize())
 		)).afterDelay(kSmallDelayMs).send();
 	}
 	for (const auto &peer : base::take(_updateNotifyPeers)) {
@@ -2101,14 +2126,14 @@ void ApiWrap::sendNotifySettingsUpdates() {
 			(channel && channel->isCommunity())
 				? MTP_inputNotifyCommunity(channel->inputChannel())
 				: MTP_inputNotifyPeer(peer->input()),
-			peer->notify().serialize()
+			withheld(peer->notify().serialize())
 		)).afterDelay(kSmallDelayMs).send();
 	}
 	const auto &settings = session().data().notifySettings();
 	for (const auto type : base::take(_updateNotifyDefaults)) {
 		request(MTPaccount_UpdateNotifySettings(
 			Data::DefaultNotifyToMTP(type),
-			settings.defaultSettings(type).serialize()
+			withheld(settings.defaultSettings(type).serialize())
 		)).afterDelay(kSmallDelayMs).send();
 	}
 	session().mtp().sendAnything();

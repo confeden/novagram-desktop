@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "mainwindow.h"
+#include "novagram/nova_branding.h"
 #include "platform/platform_notifications_manager.h"
 #include "platform/platform_specific.h"
 #include "settings/settings_builder.h"
@@ -733,7 +734,7 @@ NotifyPreview::NotifyPreview(bool nameShown, bool previewShown)
 	_name.setText(
 		st::defaultSubsectionTitle.style,
 		tr::lng_notification_preview_title(tr::now));
-	_title.setText(st::defaultSubsectionTitle.style, AppName.utf16());
+	_title.setText(st::defaultSubsectionTitle.style, NovaGram::AppName());
 
 	_text.setText(
 		st::boxTextStyle,

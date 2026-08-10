@@ -139,6 +139,10 @@ using AiTooltipManager = ComposeTooltipManager;
 struct VoiceToSend;
 } // namespace HistoryView::Controls
 
+namespace NovaGram {
+class ReadStatusBar;
+} // namespace NovaGram
+
 class BotKeyboard;
 class HistoryInner;
 
@@ -898,6 +902,7 @@ private:
 	std::unique_ptr<HistoryView::PaysStatus> _paysStatus;
 	std::unique_ptr<HistoryView::ContactStatus> _contactStatus;
 	std::unique_ptr<HistoryView::BusinessBotStatus> _businessBotStatus;
+	std::unique_ptr<NovaGram::ReadStatusBar> _novaReadStatus;
 
 	const std::shared_ptr<Ui::SendButton> _send;
 	rpl::event_stream<bool> _sendLockBadge;

@@ -275,7 +275,11 @@ void Histories::readInboxTill(
 
 	if (NovaGram::ReadStatusHidden(history)) {
 		// Returning here still runs syncGuard above, so the dialog looks read
-		// locally while nothing about it reaches the server.
+		// locally while nothing about it reaches the server. That local
+		// position survives nowhere else - the next start takes it from the
+		// server - so it is written down next to the rule and sent when the
+		// rule is lifted.
+		NovaGram::NoteHeldRead(history, tillId);
 		DEBUG_LOG(("Reading: hidden by NovaGram."));
 		return;
 	}
@@ -639,6 +643,46 @@ void Histories::sendPendingReadInbox(not_null<History*> history) {
 	}
 }
 
+void Histories::sendReadInboxAfterReveal(not_null<History*> history) {
+	if (!history->inboxReadTillKnown()) {
+		return;
+	}
+	// Deliberately the local position and not lastServerMessage(): this is what
+	// the client already counts as read, so in a dialog that was never opened
+	// the request repeats the value the server itself gave and changes nothing,
+	// instead of reporting as read what the user never saw. After a restart
+	// that position is the server's own again - History::applyDialogFields put
+	// it there - so what was read while the rule held is taken from the rule.
+	auto tillId = history->inboxReadTillId();
+	accumulate_max(tillId, NovaGram::HeldReadTill(history));
+	if (!IsServerMsgId(tillId)) {
+		// Nothing of this dialog was ever read on the server side.
+		return;
+	}
+	if (const auto state = lookup(history)) {
+		if (state->sentReadTill >= tillId) {
+			// Already sent up to at least this message.
+			return;
+		} else if (state->willReadTill >= tillId) {
+			// Queued while the dialog was still undecided, and put off by
+			// another timeout every time sendReadRequests looked at it. The
+			// answer it was waiting for has arrived, so it goes now.
+			sendPendingReadInbox(history);
+			return;
+		}
+	}
+	// Deliberately not readInboxTill(), not even forced: every one of its
+	// branches expects the local read position to be behind tillId, while the
+	// syncGuard that ran under the rule has already moved it to the last
+	// message. readInboxTillNeedsRequest() therefore answers no, and the branch
+	// that follows the forced one leaves without sending anything. The receipt
+	// goes straight into the queue readInboxTill would have used.
+	auto &state = _states[history];
+	state.willReadTill = tillId;
+	state.willReadWhen = 0;
+	sendReadRequests();
+}
+
 void Histories::reportDelivery(not_null<HistoryItem*> item) {
 	auto &set = _pendingDeliveryReport[item->history()->peer];
 	if (!set.emplace(item->id).second) {
@@ -698,10 +742,29 @@ void Histories::sendReadRequests() {
 	}
 	const auto now = crl::now();
 	auto next = std::optional<crl::time>();
+	auto dropped = std::vector<not_null<History*>>();
 	for (auto &[history, state] : _states) {
 		if (!state.willReadTill) {
 			DEBUG_LOG(("Reading: skipping zero till."));
 			continue;
+		} else if (NovaGram::ReadStatusHidden(history)) {
+			// The gate in readInboxTill cannot be the only one: the rule that
+			// closes it is born from an answer that travels over the network,
+			// so a receipt queued a moment earlier would still be waiting
+			// here. This is the last place it can be taken back.
+			DEBUG_LOG(("Reading: dropping, hidden by NovaGram."));
+			NovaGram::NoteHeldRead(history, state.willReadTill);
+			state.willReadTill = 0;
+			state.willReadWhen = 0;
+			dropped.push_back(history);
+		} else if (NovaGram::ReadStatusPending(history)) {
+			// Whether this dialog is hidden is not known yet, and a sent
+			// receipt cannot be recalled, so it waits for the answer.
+			DEBUG_LOG(("Reading: postponed, undecided by NovaGram."));
+			state.willReadWhen = now + kReadRequestTimeout;
+			if (!next || *next > state.willReadWhen) {
+				next = state.willReadWhen;
+			}
 		} else if (state.willReadWhen <= now) {
 			DEBUG_LOG(("Reading: sending with till %1."
 				).arg(state.willReadTill.bare));
@@ -715,6 +778,10 @@ void Histories::sendReadRequests() {
 		_readRequestsTimer.callOnce(*next - now);
 	} else {
 		_readRequestsTimer.cancel();
+	}
+	// After the loop: checkEmptyState() can erase from _states.
+	for (const auto history : dropped) {
+		checkEmptyState(history);
 	}
 }
 

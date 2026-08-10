@@ -14,6 +14,13 @@ public:
 	virtual void init() {
 	}
 
+	// The decoy renames the application in place, without a restart. Anything
+	// the shell caches under the old name — the Windows jump list in
+	// particular — has to be rebuilt once it is armed. A no-op where there is
+	// no such cache.
+	virtual void refreshCustomJumpList() {
+	}
+
 	virtual ~Integration();
 
 	[[nodiscard]] static std::unique_ptr<Integration> Create();

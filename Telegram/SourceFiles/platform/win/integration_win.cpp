@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/win/base_windows_winrt.h"
 #include "core/application.h"
+#include "novagram/nova_pin_policy.h"
 #include "core/core_settings.h"
 #include "core/sandbox.h"
 #include "lang/lang_keys.h"
@@ -77,6 +78,11 @@ void WindowsIntegration::createCustomJumpList() {
 }
 
 void WindowsIntegration::refreshCustomJumpList() {
+	// May be reached before the list is created (the decoy can arm before the
+	// taskbar button exists); createCustomJumpList() will build it correctly.
+	if (!_jumpList) {
+		return;
+	}
 	auto added = false;
 	auto maxSlots = UINT();
 	auto removed = (IObjectArray*)nullptr;
@@ -195,6 +201,10 @@ bool WindowsIntegration::processEvent(
 		if (wParam == WTS_SESSION_LOGOFF
 			|| wParam == WTS_SESSION_LOCK) {
 			Core::App().setScreenIsLocked(true);
+			// NovaGram: one of the answers the PIN policy offers. Upstream
+			// only remembers that the screen is locked, to keep quiet; the
+			// fork can also end the session here.
+			NovaGram::NotePinScreenLocked();
 		} else if (wParam == WTS_SESSION_LOGON
 			|| wParam == WTS_SESSION_UNLOCK) {
 			Core::App().setScreenIsLocked(false);

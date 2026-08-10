@@ -34,6 +34,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "core/application.h"
 #include "core/version.h"
+#include "novagram/nova_branding.h"
+#include "novagram/nova_settings.h"
 #include "mainwindow.h"
 #include "api/api_reactions_notify_settings.h"
 #include "api/api_updates.h"
@@ -1084,6 +1086,15 @@ Manager::DisplayOptions Manager::getNotificationOptions(
 		Data::ItemNotificationType type) const {
 	const auto hideEverything = Core::App().passcodeLocked()
 		|| forceHideDetails();
+	// NovaGram: hides what was written, never who wrote it. A notification
+	// that says nothing at all is a different promise from the one the user
+	// was given, and a name without the message is what makes the feature
+	// usable: it is still clear whether the message is worth opening. It only
+	// tightens - notifyView() below is left alone and starts working again
+	// the moment this is switched off - and every manager, the built-in
+	// windows and the system toasts alike, reads the options from here, so
+	// this one place covers all of them.
+	const auto hideContent = NovaGram::HideNotificationContentEnabled();
 	const auto view = Core::App().settings().notifyView();
 	const auto peer = item ? item->history()->peer.get() : nullptr;
 	const auto topic = item ? item->topic() : nullptr;
@@ -1092,6 +1103,7 @@ Manager::DisplayOptions Manager::getNotificationOptions(
 	result.hideNameAndPhoto = hideEverything
 		|| (view > Core::Settings::NotifyView::ShowName);
 	result.hideMessageText = hideEverything
+		|| hideContent
 		|| (view > Core::Settings::NotifyView::ShowPreview);
 	result.hideMarkAsRead = result.hideMessageText
 		|| (type != Data::ItemNotificationType::Message)
@@ -1574,7 +1586,7 @@ void NativeManager::doShowNotification(NotificationFields &&fields) {
 			: name;
 	};
 	const auto title = options.hideNameAndPhoto
-		? AppName.utf16()
+		? NovaGram::AppName()
 		: (scheduled && peer->isSelf())
 		? tr::lng_notification_reminder(tr::now)
 		: subWithChat();

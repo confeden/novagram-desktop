@@ -317,10 +317,21 @@ void PasscodeLockWidget::paintContent(QPainter &p) {
 }
 
 void PasscodeLockWidget::submit() {
-	if (_passcode->text().isEmpty()) {
+	const auto entered = _passcode->text();
+	if (entered.isEmpty()) {
 		_passcode->showError();
 		return;
 	}
+	// The emergency pin is checked before both delay gates on purpose: under
+	// coercion the wrong pins have already been burned, so a check placed
+	// after the lockout would be unavailable in exactly the one situation the
+	// pin exists for. Matching it neither touches the failure counter nor
+	// clears it, so an attacker guessing at it gains nothing either way.
+	if (_novaPinMode && NovaGram::CheckEmergencyPin(entered)) {
+		NovaGram::RunEmergencyWipe(entered); // May destroy this widget.
+		return;
+	}
+
 	if (_novaPinMode && NovaGram::LockoutRemaining() > 0) {
 		refreshNovaLockout();
 		_passcode->showError();
@@ -330,12 +341,6 @@ void PasscodeLockWidget::submit() {
 		_error = tr::lng_flood_error(tr::now);
 		_passcode->showError();
 		update();
-		return;
-	}
-
-	const auto entered = _passcode->text();
-	if (_novaPinMode && NovaGram::CheckEmergencyPin(entered)) {
-		NovaGram::RunEmergencyWipe(); // May destroy this widget.
 		return;
 	}
 

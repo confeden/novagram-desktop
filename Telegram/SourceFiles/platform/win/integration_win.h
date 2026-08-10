@@ -24,6 +24,7 @@ public:
 	~WindowsIntegration();
 
 	void init() override;
+	void refreshCustomJumpList() override;
 
 	[[nodiscard]] ITaskbarList3 *taskbarList() const;
 
@@ -42,7 +43,6 @@ private:
 		LRESULT *result);
 
 	void createCustomJumpList();
-	void refreshCustomJumpList();
 	void setupTaskbarButtons(HWND window);
 
 	uint32 _taskbarCreatedMsgId = 0;

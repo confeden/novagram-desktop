@@ -35,6 +35,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "novagram/nova_branding.h"
+#include "novagram/nova_decoy.h"
 #include "main/main_session_settings.h"
 #include "mtproto/mtproto_config.h"
 #include "settings/sections/settings_advanced.h"
@@ -382,9 +384,15 @@ MainMenu::MainMenu(
 
 	parentResized();
 
+	// The decoy has to read as an ordinary Telegram here too. This corner of
+	// the main menu is the one place the fork used to name itself no matter
+	// what, and it sits two clicks from anywhere. AppName() already spells the
+	// stock name ("Telegram Desktop") while the decoy is armed, so only the
+	// link target has to branch.
+	const auto decoy = NovaGram::Decoy::Active();
 	_telegram->setMarkedText(tr::link(
-		u"NovaGram"_q,
-		u"https://desktop.telegram.org"_q));
+		NovaGram::AppName(),
+		decoy ? u"https://desktop.telegram.org"_q : NovaGram::ProjectUrl()));
 	_telegram->setLinksTrusted();
 	_version->setMarkedText(
 		tr::link(
@@ -399,7 +407,9 @@ MainMenu::MainMenu(
 		.append(tr::link(tr::lng_menu_about(tr::now), 2))); // Link 2.
 	_version->setLink(
 		1,
-		std::make_shared<UrlClickHandler>(Core::App().changelogLink()));
+		std::make_shared<UrlClickHandler>(decoy
+			? Core::App().changelogLink()
+			: NovaGram::ReleaseUrl()));
 	_version->setLink(
 		2,
 		std::make_shared<LambdaClickHandler>([=] {

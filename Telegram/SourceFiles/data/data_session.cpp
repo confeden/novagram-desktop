@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
 #include "mtproto/mtproto_config.h"
+#include "novagram/nova_read_status.h"
 #include "window/notifications_manager.h"
 #include "history/history.h"
 #include "history/history_item.h"
@@ -1606,6 +1607,11 @@ History *Session::historyLoaded(const PeerData *peer) {
 }
 
 void Session::deleteConversationLocally(not_null<PeerData*> peer) {
+	// NovaGram: what was decided about who started this dialog belongs to the
+	// conversation that is going away. Kept, it would answer about the deleted
+	// one when the next one begins.
+	NovaGram::ForgetReadStatusRule(peer);
+
 	const auto markLeft = [&] {
 		if (const auto channel = peer->asMegagroup()) {
 			channel->addFlags(ChannelDataFlag::Left);

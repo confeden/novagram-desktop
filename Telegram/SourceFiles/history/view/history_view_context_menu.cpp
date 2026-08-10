@@ -1123,16 +1123,13 @@ void AddNovaAutoDeleteAction(
 	if (text.isEmpty()) {
 		return;
 	}
-	// Informational only: the entry states when NovaGram will remove this
-	// message, so it must not swallow a click meant for the item below it.
-	auto label = base::make_unique_q<Ui::Menu::MultilineAction>(
-		menu->menu(),
-		menu->st().menu,
-		st::historyHasCustomEmoji,
-		st::historyHasCustomEmojiPosition,
-		TextWithEntities{ text });
-	label->setAttribute(Qt::WA_TransparentForMouseEvents);
-	menu->addAction(std::move(label));
+	// An ordinary entry rather than a plain label, so that the hourglass on
+	// the left lines up with the icons of the actions above it. It is disabled
+	// on purpose: the row states when NovaGram will remove this message and
+	// has nothing to do when clicked, and a disabled entry still draws its
+	// icon while refusing the click.
+	const auto action = menu->addAction(text, [] {}, &st::menuIconTTL);
+	action->setEnabled(false);
 }
 
 void AddMessageActions(

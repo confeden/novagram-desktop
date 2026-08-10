@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
+#include "novagram/nova_pin.h"
 #include "novagram/nova_pin_box.h"
 #include "main/main_session_settings.h"
 #include "main/main_app_config.h"
@@ -196,6 +197,7 @@ void Controller::showAccount(
 			setupMain(singlePeerShowAtMsgId, std::move(oldContentCache));
 			if (isPrimary()) {
 				NovaGram::SuggestPinSetup(_sessionController.get());
+				NovaGram::RefreshEmergencyIdentity();
 			}
 
 			session->updates().isIdleValue(

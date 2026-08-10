@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/crash_reports.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
+#include "main/main_session_settings.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
 #include "data/data_user.h"
@@ -25,6 +26,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/notifications_manager.h"
 #include "window/window_controller.h"
 #include "data/data_peer_values.h" // Data::AmPremiumValue.
+#include "novagram/nova_decoy.h"
+#include "novagram/nova_decoy_persona.h"
 
 namespace Main {
 
@@ -74,6 +77,37 @@ Storage::StartResult Domain::start(const QByteArray &passcode) {
 		Assert(!started());
 	}
 	return result;
+}
+
+void Domain::startDecoySessionIfNeeded() {
+	if (!NovaGram::Decoy::Active() || _accounts.empty()) {
+		return;
+	}
+	const auto account = _accounts.front().account.get();
+	if (account->sessionExists() || account->loggingOut()) {
+		return;
+	}
+	// Nothing here pretends to be signed in. The client is handed an account
+	// record the way a finished login hands it one, and from that point it
+	// behaves like an ordinary signed in Telegram, which is the whole goal.
+	// The network is closed separately, in MTP::Instance.
+	account->createSession(NovaGram::Decoy::Snapshot().self);
+	account->local().enforceModernStorageIdBots();
+	account->local().writeMtpData();
+
+	// The decoy never asks for a PIN: it is reached by entering the emergency
+	// one, and a prompt right after would announce that something was
+	// destroyed here. Upstream clears the lock in removePasscodeIfEmpty(),
+	// which bails out as soon as a session exists, and by now the decoy has
+	// one. Deferred so that it lands after the window has been activated, the
+	// order a normal unlock happens in.
+	if (Core::App().passcodeLocked()) {
+		crl::on_main(this, [] {
+			if (Core::App().passcodeLocked()) {
+				Core::App().unlockPasscode();
+			}
+		});
+	}
 }
 
 void Domain::finish() {
@@ -127,6 +161,13 @@ void Domain::resetWithForgottenPasscode() {
 
 void Domain::activateAfterStarting() {
 	Expects(started());
+
+	// Here rather than in start(): the wipe run by the emergency PIN reaches
+	// this through resetWithForgottenPasscode(), which never calls start().
+	// Hooking start() alone left the decoy showing up only after a restart,
+	// and a login screen right after the emergency PIN is exactly what it
+	// exists to avoid.
+	startDecoySessionIfNeeded();
 
 	auto toActivate = _accounts.front().account.get();
 	for (const auto &[index, account] : _accounts) {
@@ -360,6 +401,12 @@ void Domain::watchSession(not_null<Account*> account) {
 	) | rpl::filter([=](Session *session) {
 		return !session;
 	}) | rpl::on_next([=] {
+		if (NovaGram::Decoy::Active() && !Core::Quitting()) {
+			// A log out pressed inside the decoy, or the emergency PIN over a
+			// running session. Either way the answer is the decoy again, not
+			// the login screen.
+			crl::on_main(this, [=] { startDecoySessionIfNeeded(); });
+		}
 		scheduleUpdateUnreadBadge();
 		closeAccountWindows(account);
 		if (!Core::Quitting()) {

@@ -43,6 +43,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "novagram/nova_decoy.h"
 #include "novagram/nova_settings.h"
 #include "settings/settings_builder.h"
 #include "settings/cloud_password/settings_cloud_password_input.h"
@@ -387,12 +388,24 @@ void BuildSectionButtons(SectionBuilder &builder) {
 		.keywords = { u"security"_q, u"passcode"_q, u"password"_q, u"2fa"_q },
 	});
 
-	builder.addSectionButton({
-		.title = rpl::single(NovaGram::SettingsSectionTitle()),
-		.targetSection = NovaGram::SettingsSectionId(),
-		.icon = { &st::menuIconAntispam },
-		.keywords = { u"novagram"_q, u"pin"_q, u"night"_q, u"silent"_q },
-	});
+	if (!NovaGram::Decoy::Active()) {
+		// Hidden in the decoy: it is the one entry that says NovaGram out
+		// loud, and a decoy that names the fork answers the question it
+		// exists to avoid.
+		builder.addSectionButton({
+			.title = rpl::single(NovaGram::SettingsSectionTitle()),
+			.targetSection = NovaGram::SettingsSectionId(),
+			.icon = { &st::menuIconAntispam },
+			.keywords = {
+				u"novagram"_q,
+				u"pin"_q,
+				u"night"_q,
+				u"silent"_q,
+				u"previews"_q,
+				u"push"_q,
+			},
+		});
+	}
 
 	builder.addSectionButton({
 		.title = tr::lng_settings_section_chat_settings(),

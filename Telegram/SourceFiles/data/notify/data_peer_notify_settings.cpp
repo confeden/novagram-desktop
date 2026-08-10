@@ -82,6 +82,7 @@ public:
 	std::optional<TimeId> muteUntil() const;
 	std::optional<bool> silentPosts() const;
 	std::optional<NotifySound> sound() const;
+	std::optional<bool> showPreviews() const;
 	MTPinputPeerNotifySettings serialize() const;
 
 private:
@@ -179,6 +180,10 @@ std::optional<bool> NotifyPeerSettingsValue::silentPosts() const {
 
 std::optional<NotifySound> NotifyPeerSettingsValue::sound() const {
 	return _sound;
+}
+
+std::optional<bool> NotifyPeerSettingsValue::showPreviews() const {
+	return _showPreviews;
 }
 
 MTPinputPeerNotifySettings NotifyPeerSettingsValue::serialize() const {
@@ -284,6 +289,12 @@ std::optional<bool> PeerNotifySettings::silentPosts() const {
 std::optional<NotifySound> PeerNotifySettings::sound() const {
 	return _value
 		? _value->sound()
+		: std::nullopt;
+}
+
+std::optional<bool> PeerNotifySettings::showPreviews() const {
+	return _value
+		? _value->showPreviews()
 		: std::nullopt;
 }
 

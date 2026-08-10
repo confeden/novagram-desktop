@@ -66,6 +66,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_mute.h"
 #include "menu/menu_ttl_validator.h"
 #include "novagram/nova_autodelete.h"
+#include "novagram/nova_decoy.h"
 #include "novagram/nova_erase.h"
 #include "novagram/nova_read_status.h"
 #include "apiwrap.h"
@@ -1523,7 +1524,9 @@ void ShowDisableSharingBox(
 }
 
 void Filler::addNovaAutoDelete() {
-	if (!_peer || _peer->isSelf()) {
+	// Fork-only entry: kept out of the decoy explicitly instead of relying on a
+	// freshly wiped session leaving NovaGram::Enabled() false.
+	if (!_peer || _peer->isSelf() || NovaGram::Decoy::Active()) {
 		return;
 	}
 	const auto peer = _peer;
@@ -1542,7 +1545,11 @@ void Filler::addNovaAutoDelete() {
 }
 
 void Filler::addNovaReadStatus() {
-	if (!_peer || !NovaGram::ReadStatusHiddenFor(_peer)) {
+	// Fork-only entry: kept out of the decoy explicitly instead of relying on a
+	// freshly wiped session carrying no hidden-read-status rules.
+	if (!_peer
+		|| NovaGram::Decoy::Active()
+		|| !NovaGram::ReadStatusHiddenFor(_peer)) {
 		return;
 	}
 	const auto peer = _peer;
@@ -1555,7 +1562,10 @@ void Filler::addNovaReadStatus() {
 }
 
 void Filler::addNovaEraseEvidence() {
-	if (!_peer) {
+	// No fork-only entry may appear in the decoy: this one is shown for every
+	// peer, so without an explicit check it turns the disguise into a plain
+	// Telegram with one extra menu item.
+	if (!_peer || NovaGram::Decoy::Active()) {
 		return;
 	}
 	const auto peer = _peer;

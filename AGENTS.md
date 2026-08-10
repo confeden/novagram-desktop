@@ -39,38 +39,39 @@ Dependencies are located relative to the repository: `../Libraries`, `../win64/L
 
 ## Build Configuration
 
-### Build Commands
+This is the NovaGram fork, not an upstream tdesktop checkout. The layout above
+describes upstream and does not apply here; the build is driven by a script in
+the parent repository and the canonical instructions live in
+[`../../docs/build.md`](../../docs/build.md).
 
-**From repository root, run:**
+**Always build through the script, from the NovaGram repository root:**
 
-```bash
-cmake --build out --config Debug --target Telegram
+```powershell
+scripts\build-desktop.ps1 -Config Release
 ```
 
-That's it. The `out/` directory is already configured. The executable will be at `out/Debug/Telegram.exe`.
+Release is the configuration NovaGram ships and the one the existing
+`out/NovaGram.exe` was produced with, so it is also what changes are tested in.
+The build is incremental and takes a couple of minutes.
 
-**From WSL, run through the Linux Docker build environment:**
+Calling `cmake --build out` or `ninja -C out` directly fails: the CMake cache
+stores `CMAKE_C_COMPILER=cl`, which only resolves inside the `vcvars64.bat`
+environment the script sets up. A direct call makes CMake re-run, fail to find
+`cl` and Ninja, and truncate `out/CMakeCache.txt`, after which the next
+configure rebuilds the whole tree.
 
-```bash
-Telegram/build/docker/centos_env/build_debug.sh
-```
-
-**Important:** When running cmake from a shell that doesn't support `cd`, use quoted absolute paths:
-```bash
-cmake --build "l:\Telegram\tx64\out" --config Debug --target Telegram
-```
-
-**Never build Release** - it's extremely heavy and not needed for testing changes.
+Close a running `out/NovaGram.exe` before building. It holds the executable, so
+the final link fails with
+`lld-link: error: failed to write output 'NovaGram.exe': permission denied`.
 
 ## Platform-Specific Requirements
 
 ### Windows
-- Requires Visual Studio 2022
-- Must run from appropriate Native Tools Command Prompt:
-  - "x64 Native Tools Command Prompt" for `win64`
-  - "x86 Native Tools Command Prompt" for `win`
-  - "ARM64 Native Tools Command Prompt" for `winarm`
-- Dependencies: `../win64/Libraries` (64-bit) or `../Libraries` (32-bit)
+- NovaGram pins Visual Studio 2026 Build Tools, Windows SDK 10.0.26100.0, Qt
+  5.15.19 and a portable toolchain under `D:\Programs\BuildTools`. The exact
+  versions are listed in [`../../docs/build.md`](../../docs/build.md).
+- No Native Tools Command Prompt is needed: `scripts/build-desktop.ps1` sets up
+  the environment itself and works from any shell.
 
 ### macOS
 - Requires Xcode

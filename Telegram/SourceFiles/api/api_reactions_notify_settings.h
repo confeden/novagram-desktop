@@ -58,6 +58,12 @@ private:
 	rpl::variable<ReactionsNotifyFrom> _pollVotesFrom
 		= ReactionsNotifyFrom::All;
 	rpl::variable<bool> _showPreviews = true;
+	// NovaGram: `sound` is a required field of reactionsNotifySettings, so
+	// every save writes one. Upstream parses no sound and always writes the
+	// default, which only ever cost the user their choice when they changed a
+	// reactions setting by hand; novagram/nova_notify_previews now saves by
+	// itself, which would have made that silent and automatic.
+	MTPNotificationSound _sound = MTP_notificationSoundDefault();
 	std::vector<Fn<void()>> _callbacks;
 
 };

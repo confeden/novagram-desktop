@@ -1578,22 +1578,38 @@ PRIVATE
     novagram/nova_autodelete.h
     novagram/nova_branding.cpp
     novagram/nova_branding.h
+    novagram/nova_decoy.cpp
+    novagram/nova_decoy.h
+    novagram/nova_decoy_persona.cpp
+    novagram/nova_decoy_persona.h
+    novagram/nova_decoy_server.cpp
+    novagram/nova_decoy_server.h
     novagram/nova_erase.cpp
     novagram/nova_erase.h
     novagram/nova_read_status.cpp
     novagram/nova_read_status.h
     novagram/nova_keypad.cpp
     novagram/nova_keypad.h
+    novagram/nova_marquee_button.cpp
+    novagram/nova_marquee_button.h
     novagram/nova_night_silent.cpp
     novagram/nova_night_silent.h
+    novagram/nova_notify_previews.cpp
+    novagram/nova_notify_previews.h
     novagram/nova_pin.cpp
     novagram/nova_pin.h
+    novagram/nova_pin_policy.cpp
+    novagram/nova_pin_policy.h
     novagram/nova_pin_box.cpp
     novagram/nova_pin_box.h
     novagram/nova_screen_guard.cpp
     novagram/nova_screen_guard.h
+    novagram/nova_seal.cpp
+    novagram/nova_seal.h
     novagram/nova_settings.cpp
     novagram/nova_settings.h
+    novagram/nova_update.cpp
+    novagram/nova_update.h
 
     overview/overview_checkbox.cpp
     overview/overview_checkbox.h

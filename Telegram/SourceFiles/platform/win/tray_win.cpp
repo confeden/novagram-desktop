@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/version.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "novagram/nova_branding.h"
 #include "storage/localstorage.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
@@ -169,7 +170,6 @@ void Tray::createIcon() {
 		}
 		_icon->init();
 		updateIcon();
-		_icon->updateToolTip(AppName.utf16());
 
 		using Reason = QPlatformSystemTrayIcon::ActivationReason;
 		base::qt_signal_producer(
@@ -210,6 +210,11 @@ void Tray::updateIcon() {
 	if (!_icon) {
 		return;
 	}
+	// The decoy is armed in place, without a restart, so the tooltip cannot be
+	// read only once in createIcon(): it is re-read here, which runs on every
+	// counter update — including the unread badge refresh that lands right
+	// after the decoy takes the session over.
+	_icon->updateToolTip(NovaGram::AppName());
 	const auto controller = Core::App().activePrimaryWindow();
 	const auto session = !controller
 		? nullptr
@@ -270,7 +275,7 @@ void Tray::addAction(rpl::producer<QString> text, Fn<void()> &&callback) {
 void Tray::showTrayMessage() const {
 	if (!cSeenTrayTooltip() && _icon) {
 		_icon->showMessage(
-			AppName.utf16(),
+			NovaGram::AppName(),
 			tr::lng_tray_icon_text(tr::now),
 			QIcon(),
 			QPlatformSystemTrayIcon::Information,

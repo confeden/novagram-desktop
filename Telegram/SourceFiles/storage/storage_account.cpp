@@ -765,6 +765,12 @@ void Account::writeMap() {
 
 void Account::reset() {
 	_writeSearchSuggestionsTimer.cancel();
+	// The key is dropped below, but readPrefs() only runs when there is one,
+	// so without this the map stays in memory and the next account signed in
+	// on this slot would read the previous one's preferences.
+	_writePrefsTimer.cancel();
+	_prefs.clear();
+	_prefsChanged = false;
 
 	auto names = collectGoodNames();
 	_draftsMap.clear();

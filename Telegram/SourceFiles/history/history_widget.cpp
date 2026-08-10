@@ -158,6 +158,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_send.h"
 #include "menu/menu_timecode_action.h"
 #include "mtproto/mtproto_config.h"
+#include "novagram/nova_read_status.h"
 #include "lang/lang_keys.h"
 #include "settings/business/settings_quick_replies.h"
 #include "settings/settings_credits_graphics.h"
@@ -2012,6 +2013,9 @@ void HistoryWidget::orderWidgets() {
 	_richDraftPreview->raise();
 	_discardRichDraft->raise();
 	_topBars->raise();
+	if (_novaReadStatus) {
+		_novaReadStatus->bar().raise();
+	}
 	if (_businessBotStatus) {
 		_businessBotStatus->bar().raise();
 	}
@@ -3074,6 +3078,7 @@ void HistoryWidget::showHistory(
 	_paysStatus = nullptr;
 	_contactStatus = nullptr;
 	_businessBotStatus = nullptr;
+	_novaReadStatus = nullptr;
 
 	Core::App().mediaDevices().refreshRecordAvailability();
 
@@ -3109,6 +3114,14 @@ void HistoryWidget::showHistory(
 			) | rpl::on_next([=] {
 				updateControlsGeometry();
 			}, _businessBotStatus->bar().lifetime());
+			_novaReadStatus = std::make_unique<NovaGram::ReadStatusBar>(
+				controller()->uiShow(),
+				_topBars.get(),
+				user);
+			_novaReadStatus->bar().heightValue(
+			) | rpl::on_next([=] {
+				updateControlsGeometry();
+			}, _novaReadStatus->bar().lifetime());
 		}
 		orderWidgets();
 		controller()->tabbedSelector()->setCurrentPeer(_peer);
@@ -3926,6 +3939,9 @@ void HistoryWidget::updateControlsVisibility() {
 	}
 	if (_businessBotStatus) {
 		_businessBotStatus->show();
+	}
+	if (_novaReadStatus) {
+		_novaReadStatus->show();
 	}
 	if (_subsectionTabs) {
 		_subsectionTabs->show();
@@ -5383,6 +5399,9 @@ void HistoryWidget::hideChildWidgets() {
 	}
 	if (_businessBotStatus) {
 		_businessBotStatus->hide();
+	}
+	if (_novaReadStatus) {
+		_novaReadStatus->hide();
 	}
 	hideChildren();
 }
@@ -7908,9 +7927,14 @@ void HistoryWidget::updateControlsGeometry() {
 	if (_businessBotStatus) {
 		_businessBotStatus->bar().move(tabsLeftSkip, businessBotTop);
 	}
-	const auto scrollAreaTop = _topBars->y()
-		+ businessBotTop
+	const auto novaReadStatusTop = businessBotTop
 		+ (_businessBotStatus ? _businessBotStatus->bar().height() : 0);
+	if (_novaReadStatus) {
+		_novaReadStatus->bar().move(0, novaReadStatusTop);
+	}
+	const auto scrollAreaTop = _topBars->y()
+		+ novaReadStatusTop
+		+ (_novaReadStatus ? _novaReadStatus->bar().height() : 0);
 	_topBars->resize(
 		innerWidth,
 		scrollAreaTop - _topBars->y() + st::lineWidth);
@@ -8196,6 +8220,9 @@ void HistoryWidget::updateHistoryGeometry(
 	}
 	if (_businessBotStatus) {
 		newScrollHeight -= _businessBotStatus->bar().height();
+	}
+	if (_novaReadStatus) {
+		newScrollHeight -= _novaReadStatus->bar().height();
 	}
 	if (isChoosingTheme()) {
 		newScrollHeight -= _chooseTheme->height();
@@ -8643,6 +8670,7 @@ int HistoryWidget::computeMaxFieldHeight() const {
 		- (_paysStatus ? _paysStatus->bar().height() : 0)
 		- (_contactStatus ? _contactStatus->bar().height() : 0)
 		- (_businessBotStatus ? _businessBotStatus->bar().height() : 0)
+		- (_novaReadStatus ? _novaReadStatus->bar().height() : 0)
 		- (_sponsoredMessageBar ? _sponsoredMessageBar->height() : 0)
 		- (_pinnedBar ? _pinnedBar->height() : 0)
 		- (_groupCallBar ? _groupCallBar->height() : 0)

@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h" // Account::sessionValue.
 #include "main/main_domain.h"
 #include "core/application.h"
+#include "novagram/nova_pin_policy.h"
 #include "core/sandbox.h"
 #include "core/shortcuts.h"
 #include "lang/lang_keys.h"
@@ -562,6 +563,9 @@ void MainWindow::handleStateChanged(Qt::WindowState state) {
 	stateChangedHook(state);
 	updateControlsGeometry();
 	if (state == Qt::WindowMinimized) {
+		// NovaGram: the window leaving the screen is one of the answers the
+		// PIN policy offers to "when to ask for it again".
+		NovaGram::NotePinWindowHidden();
 		controller().updateIsActiveBlur();
 	} else {
 		controller().updateIsActiveFocus();
@@ -947,6 +951,9 @@ bool MainWindow::minimizeToTray() {
 	if (Core::Quitting() || !Core::App().tray().has()) {
 		return false;
 	}
+	// NovaGram: going to the tray is the window leaving the screen too, and it
+	// does not pass through handleStateChanged.
+	NovaGram::NotePinWindowHidden();
 
 	closeWithoutDestroy();
 	controller().updateIsActiveBlur();

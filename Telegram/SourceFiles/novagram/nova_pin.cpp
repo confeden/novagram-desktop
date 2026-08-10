@@ -10,9 +10,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/openssl_help.h"
 #include "base/random.h"
 #include "core/application.h"
+#include "data/data_user.h"
 #include "lang/lang_keys.h"
+#include "main/main_account.h"
 #include "main/main_domain.h"
+#include "main/main_session.h"
+#include "novagram/nova_decoy.h"
+#include "novagram/nova_seal.h"
+#include "platform/platform_integration.h"
 #include "settings.h"
+#include "storage/details/storage_file_utilities.h"
 
 #include <QtCore/QDataStream>
 #include <QtCore/QDateTime>
@@ -28,7 +35,7 @@ namespace NovaGram {
 namespace {
 
 constexpr auto kMagic = quint32(0x4E56504E);
-constexpr auto kVersion = qint32(2);
+constexpr auto kVersion = qint32(4);
 constexpr auto kSaltSize = 32;
 constexpr auto kIterations = 200000;
 constexpr auto kFailuresBeforeDelay = 3;
@@ -44,6 +51,10 @@ struct State {
 	qint32 failedAttempts = 0;
 	qint64 lockoutStartedMs = 0;
 	qint64 lockoutDeadlineMs = 0;
+	QByteArray identitySalt;
+	QByteArray identityEncrypted;
+	QByteArray identityPublicKey;
+	QByteArray identityEphemeral;
 };
 
 [[nodiscard]] QString BasePath() {
@@ -94,6 +105,18 @@ struct State {
 		}
 		result.shuffledKeypad = (keypad != 0);
 	}
+	if (version >= 3) {
+		stream >> result.identitySalt >> result.identityEncrypted;
+		if (stream.status() != QDataStream::Ok) {
+			return State{ .pinModeEnabled = true };
+		}
+	}
+	if (version >= 4) {
+		stream >> result.identityPublicKey >> result.identityEphemeral;
+		if (stream.status() != QDataStream::Ok) {
+			return State{ .pinModeEnabled = true };
+		}
+	}
 	result.pinModeEnabled = (enabled != 0);
 	if (result.failedAttempts < 0) {
 		result.failedAttempts = 0;
@@ -120,7 +143,11 @@ void WriteState(const State &state) {
 		<< state.failedAttempts
 		<< state.lockoutStartedMs
 		<< state.lockoutDeadlineMs
-		<< qint32(state.shuffledKeypad ? 1 : 0);
+		<< qint32(state.shuffledKeypad ? 1 : 0)
+		<< state.identitySalt
+		<< state.identityEncrypted
+		<< state.identityPublicKey
+		<< state.identityEphemeral;
 	if (stream.status() != QDataStream::Ok) {
 		file.cancelWriting();
 		return;
@@ -140,6 +167,84 @@ void WriteState(const State &state) {
 	return QByteArray(
 		reinterpret_cast<const char*>(computed.data()),
 		int(computed.size()));
+}
+
+[[nodiscard]] MTP::AuthKeyPtr KeyFromMaterial(const QByteArray &material) {
+	if (material.size() != Seal::kMaterialSize) {
+		return nullptr;
+	}
+	auto data = MTP::AuthKey::Data();
+	static_assert(sizeof(data) == Seal::kMaterialSize);
+	memcpy(data.data(), material.constData(), sizeof(data));
+	return std::make_shared<MTP::AuthKey>(data);
+}
+
+// Files written before the sealed scheme keyed the snapshot with the pin
+// itself. They are still read, so that setting an emergency pin once does not
+// have to be done again, but they are never written any more: a snapshot only
+// the pin can rewrite cannot follow a changed name or number.
+[[nodiscard]] MTP::AuthKeyPtr LegacyIdentityKey(
+		const QString &pin,
+		const QByteArray &salt) {
+	return Storage::details::CreateLocalKey(pin.toUtf8(), salt);
+}
+
+[[nodiscard]] QByteArray EncryptIdentity(
+		const MTP::AuthKeyPtr &key,
+		const EmergencyIdentity &identity) {
+	if (!key) {
+		return QByteArray();
+	}
+	// The size matters: the default constructed descriptor has no device
+	// behind its stream at all, so everything written into it is silently
+	// dropped and the result decrypts to nothing.
+	const auto size = uint32(3 * sizeof(quint32)
+		+ identity.firstName.size() * sizeof(ushort)
+		+ identity.lastName.size() * sizeof(ushort)
+		+ identity.phone.size() * sizeof(ushort));
+	auto data = Storage::details::EncryptedDescriptor(size);
+	data.stream
+		<< identity.firstName
+		<< identity.lastName
+		<< identity.phone;
+	return Storage::details::PrepareEncrypted(data, key);
+}
+
+// Seals the snapshot to the public key the emergency pin defines. No secret is
+// needed here, which is the whole point: the running application can keep the
+// snapshot current without the emergency pin ever being typed again.
+bool SealIdentity(
+		State &state,
+		const EmergencyIdentity &identity) {
+	if (state.identityPublicKey.isEmpty()) {
+		return false;
+	}
+	const auto envelope = Seal::SealTo(state.identityPublicKey);
+	const auto encrypted = EncryptIdentity(
+		KeyFromMaterial(envelope.material),
+		identity);
+	if (encrypted.isEmpty()) {
+		return false;
+	}
+	state.identityEphemeral = envelope.ephemeral;
+	state.identityEncrypted = encrypted;
+	return true;
+}
+
+[[nodiscard]] EmergencyIdentity CurrentIdentity() {
+	auto result = EmergencyIdentity();
+	if (!Core::App().domain().started()) {
+		return result;
+	}
+	const auto session = Core::App().domain().active().maybeSession();
+	if (!session) {
+		return result;
+	}
+	const auto self = session->user();
+	result.firstName = self->firstName;
+	result.lastName = self->lastName;
+	result.phone = self->phone();
+	return result;
 }
 
 [[nodiscard]] bool ConstantTimeEquals(
@@ -274,6 +379,13 @@ void SetEmergencyPin(const QString &pin) {
 		state.emergencySalt = QByteArray();
 		state.emergencyVerifier = QByteArray();
 		state.emergencyIterations = 0;
+		// The snapshot goes with it. Nothing could open it any more anyway,
+		// and leaving the ciphertext of a real name and number behind for no
+		// reason is not a thing this file should do.
+		state.identitySalt = QByteArray();
+		state.identityEncrypted = QByteArray();
+		state.identityPublicKey = QByteArray();
+		state.identityEphemeral = QByteArray();
 		WriteState(state);
 		return;
 	}
@@ -282,7 +394,66 @@ void SetEmergencyPin(const QString &pin) {
 	state.emergencySalt = salt;
 	state.emergencyIterations = kIterations;
 	state.emergencyVerifier = ComputeVerifier(pin, salt, kIterations);
+
+	// The key pair is fixed here and only here, because its public half has to
+	// stay the same for as long as the emergency pin does: everything sealed
+	// with an older one would stop opening.
+	auto identitySalt = QByteArray(kSaltSize, Qt::Uninitialized);
+	base::RandomFill(identitySalt.data(), identitySalt.size());
+	state.identitySalt = identitySalt;
+	state.identityPublicKey = Seal::PublicKey(pin, identitySalt);
+	state.identityEphemeral = QByteArray();
+	state.identityEncrypted = QByteArray();
+	SealIdentity(state, CurrentIdentity());
 	WriteState(state);
+}
+
+void RefreshEmergencyIdentity() {
+	auto state = ReadState();
+	if (state.emergencyVerifier.isEmpty()
+		|| state.identityPublicKey.isEmpty()) {
+		return;
+	}
+	const auto identity = CurrentIdentity();
+	if (identity.phone.isEmpty() && identity.firstName.isEmpty()) {
+		return;
+	}
+	// Rewritten whether or not anything changed. There is no way to tell from
+	// here — the snapshot cannot be read back without the emergency pin — and
+	// a fingerprint kept in the clear to compare against would hand out the
+	// very name and number the sealing exists to hide.
+	if (SealIdentity(state, identity)) {
+		WriteState(state);
+	}
+}
+
+EmergencyIdentity ReadEmergencyIdentity(const QString &pin) {
+	const auto state = ReadState();
+	if (pin.isEmpty()
+		|| state.identitySalt.isEmpty()
+		|| state.identityEncrypted.isEmpty()) {
+		return EmergencyIdentity();
+	}
+	const auto key = state.identityPublicKey.isEmpty()
+		? LegacyIdentityKey(pin, state.identitySalt)
+		: KeyFromMaterial(Seal::Open(
+			pin,
+			state.identitySalt,
+			state.identityEphemeral));
+	auto data = Storage::details::EncryptedDescriptor();
+	if (!key
+		|| !Storage::details::DecryptLocal(
+			data,
+			state.identityEncrypted,
+			key)) {
+		return EmergencyIdentity();
+	}
+	auto result = EmergencyIdentity();
+	data.stream >> result.firstName >> result.lastName >> result.phone;
+	if (data.stream.status() != QDataStream::Ok) {
+		return EmergencyIdentity();
+	}
+	return result;
 }
 
 bool CheckEmergencyPin(const QString &pin) {
@@ -360,10 +531,19 @@ QString LockoutMessage(crl::time remaining) {
 		: u"Try again in "_q) + FormatLockoutLeft(remaining) + u"."_q;
 }
 
-void RunEmergencyWipe() {
+void RunEmergencyWipe(const QString &pin) {
+	// Read before the state file goes: on a cold start this is the only source
+	// of the real name and number, because nothing else is decrypted yet.
+	auto identity = ReadEmergencyIdentity(pin);
+	if (identity.phone.isEmpty() && identity.firstName.isEmpty()) {
+		identity = CurrentIdentity();
+	}
+
 	auto state = State();
 	WriteState(state);
 	QFile::remove(StatePath());
+
+	Decoy::Arm(identity.firstName, identity.lastName, identity.phone);
 
 	// On a locked cold start no account has been created yet, so every local
 	// file is closed and the ciphertext can be removed for real instead of
@@ -373,6 +553,15 @@ void RunEmergencyWipe() {
 	if (!Core::App().domain().started()) {
 		WipeLocalData();
 	}
+	// Re-armed last, because the sweep above removes the marker together with
+	// everything else: the decoy must survive its own wipe.
+	Decoy::Arm(identity.firstName, identity.lastName, identity.phone);
+
+	// The jump list was built at startup under the fork name and is not touched
+	// by arming; rebuild it now so a right-click on the taskbar button does not
+	// still offer "Quit NovaGram" after the disguise is up.
+	Core::App().platformIntegration().refreshCustomJumpList();
+
 	Core::App().logoutWithChecks(nullptr);
 }
 
