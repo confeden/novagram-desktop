@@ -63,8 +63,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/message_field.h"
 #include "core/application.h"
 #include "core/ui_integration.h"
-#include "core/update_checker.h"
 #include "core/shortcuts.h"
+#include "novagram/nova_update.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "window/window_slide_animation.h"
@@ -646,17 +646,14 @@ Widget::Widget(
 		[=] { searchCursorMoved(); },
 		Qt::QueuedConnection); // So getLastText() works already.
 
-	if (!Core::UpdaterDisabled()) {
-		Core::UpdateChecker checker;
-		rpl::merge(
-			rpl::single(rpl::empty),
-			checker.isLatest(),
-			checker.failed(),
-			checker.ready()
-		) | rpl::on_next([=] {
-			checkUpdateStatus();
-		}, lifetime());
-	}
+	// NovaGram: the upstream updater is switched off in this build, so the
+	// bar below the chat list is driven by the fork's own checker instead.
+	// StatusValue() is an rpl::variable, so it delivers the current phase on
+	// subscription and no separate first shot is needed.
+	NovaGram::Update::StatusValue(
+	) | rpl::on_next([=](const NovaGram::Update::Status &) {
+		checkUpdateStatus();
+	}, lifetime());
 
 	_cancelSearch->setClickedCallback([=] {
 		cancelSearch({ .jumpBackToSearchedChat = true });
@@ -2529,28 +2526,32 @@ QPixmap Widget::grabForFolderSlideAnimation() {
 }
 
 void Widget::checkUpdateStatus() {
-	Expects(!Core::UpdaterDisabled());
-
 	if (_layout == Layout::Child) {
 		return;
 	}
 
-	using Checker = Core::UpdateChecker;
-	if (Checker().state() == Checker::State::Ready) {
+	// NovaGram: same widget, same style and the same place upstream puts it -
+	// only the state comes from the fork's checker. Unlike upstream, which
+	// downloads by itself and shows the bar only once a build is ready, this
+	// one downloads on request, so the bar appears as soon as a newer release
+	// is known and then reports its own progress.
+	const auto status = NovaGram::Update::Current();
+	if (NovaGram::Update::BarVisible(status)) {
+		const auto text = NovaGram::Update::BarText(status);
 		if (_updateTelegram) {
+			_updateTelegram->setText(text);
 			return;
 		}
 		_updateTelegram.create(
 			this,
-			tr::lng_update_telegram(tr::now),
+			text,
 			st::dialogsUpdateButton,
 			st::dialogsInstallUpdate,
 			st::dialogsInstallUpdateOver,
 			true);
 		_updateTelegram->show();
 		_updateTelegram->setClickedCallback([] {
-			Core::checkReadyUpdate();
-			Core::Restart();
+			NovaGram::Update::ActOnBar();
 		});
 		if (_connecting) {
 			_connecting->raise();

@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "export/export_manager.h"
 #include "export/view/export_view_panel_controller.h"
 #include "mtproto/mtproto_config.h"
+#include "novagram/nova_muted_members.h"
 #include "novagram/nova_read_status.h"
 #include "window/notifications_manager.h"
 #include "history/history.h"
@@ -1611,6 +1612,10 @@ void Session::deleteConversationLocally(not_null<PeerData*> peer) {
 	// conversation that is going away. Kept, it would answer about the deleted
 	// one when the next one begins.
 	NovaGram::ForgetReadStatusRule(peer);
+	// Same reason for the muted members of this chat: a rule that outlives its
+	// conversation would mute a stranger in whatever chat takes that
+	// identifier next.
+	NovaGram::ForgetMutedMembers(peer);
 
 	const auto markLeft = [&] {
 		if (const auto channel = peer->asMegagroup()) {

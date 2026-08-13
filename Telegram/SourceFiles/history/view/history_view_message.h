@@ -386,6 +386,13 @@ private:
 		Painter &p,
 		QRect &trect,
 		const PaintContext &context) const;
+	// NovaGram: this message belongs to a member muted in this chat and has not
+	// been unfolded by hand, so it is drawn as one dimmed line.
+	[[nodiscard]] bool novaCollapsed() const;
+	void paintNovaCollapsed(Painter &p, const PaintContext &context) const;
+	[[nodiscard]] ClickHandlerPtr novaExpandLink() const;
+	[[nodiscard]] QRect novaCollapsedUserpicRect() const;
+
 	void paintText(
 		Painter &p,
 		QRect &trect,

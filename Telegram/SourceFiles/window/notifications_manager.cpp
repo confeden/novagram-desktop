@@ -35,6 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/version.h"
 #include "novagram/nova_branding.h"
+#include "novagram/nova_muted_members.h"
 #include "novagram/nova_settings.h"
 #include "mainwindow.h"
 #include "api/api_reactions_notify_settings.h"
@@ -319,6 +320,19 @@ System::SkipState System::skipNotification(
 	if (!thread
 		|| !thread->currentNotification()
 		|| (messageType && item->skipNotification())
+		// NovaGram: a member muted in this chat raises no notification of any
+		// kind. Here rather than deeper down, because this is the one gate
+		// every kind passes through - a message, a reaction, a poll vote - and
+		// it runs before the toast, the sound and the taskbar alert alike.
+		//
+		// A reaction and a poll vote need the second question: there the item
+		// is the user's OWN message, the one reacted to, and the person who
+		// reacted is in reactionOrVoteSender. Asking only about the item would
+		// let a muted member ring by reacting.
+		|| NovaGram::ItemFromMutedMember(item)
+		|| NovaGram::MutedNotificationSender(
+			item,
+			notification.reactionOrVoteSender)
 		|| (type == Data::ItemNotificationType::Reaction
 			&& skipSentNotification(item, _sentReactionNotifications))
 		|| (type == Data::ItemNotificationType::PollVote

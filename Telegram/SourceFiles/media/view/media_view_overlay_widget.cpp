@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
+#include "novagram/nova_filenames.h"
 #include "core/ui_integration.h"
 #include "core/crash_reports.h"
 #include "core/sandbox.h"
@@ -3125,7 +3126,13 @@ void OverlayWidget::saveAs() {
 		if (!bytes.isEmpty() || location.accessEnable()) {
 			QFileInfo alreadyInfo(location.name());
 			QDir alreadyDir(alreadyInfo.dir());
-			QString name = alreadyInfo.fileName(), filter;
+			// NovaGram: the copy on this disk is called a masked token, and
+			// this is the deliberate "Save as", which the setting promises
+			// keeps the real name. Same rule as DocumentFileNameForSave.
+			QString name = NovaGram::MaskedFileNamesEnabled()
+				? _document->filename()
+				: alreadyInfo.fileName();
+			QString filter;
 			const auto mimeType = Core::MimeTypeForName(_document->mimeString());
 			QStringList p = mimeType.globPatterns();
 			QString pattern = p.isEmpty() ? QString() : p.front();
@@ -3305,8 +3312,12 @@ void OverlayWidget::downloadMedia() {
 		const auto &location = _document->location(true);
 		if (location.accessEnable()) {
 			if (!QDir().exists(path)) QDir().mkpath(path);
+			// NovaGram: this path never goes through Data::FileNameUnsafe, so
+			// without the same mask here the download button in the viewer
+			// would keep writing the sender's file name into the folder that
+			// every other download is masked in.
 			toName = filedialogNextFilename(
-				_document->filename(),
+				NovaGram::MaskLocalFileName(_document->filename()),
 				location.name(),
 				path);
 			if (!toName.isEmpty() && toName != location.name()) {

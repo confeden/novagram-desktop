@@ -64,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_pin_policy.h"
 #include "novagram/nova_screen_guard.h"
+#include "novagram/nova_metadata.h"
 #include "novagram/nova_update.h"
 #include "media/view/media_view_overlay_widget.h"
 #include "media/view/media_view_open_common.h"
@@ -304,6 +305,11 @@ void Application::run() {
 	// After the settings are read, because the check is a setting, and it does
 	// nothing at all while the decoy is on.
 	NovaGram::Update::Start();
+
+	// Read once here so that the worker thread which prepares an upload has an
+	// answer without touching the settings, which belong to this thread.
+	[[maybe_unused]] const auto stripMetadata
+		= NovaGram::StripMetadataEnabled();
 
 	Test::ApplyStartupOverrides();
 

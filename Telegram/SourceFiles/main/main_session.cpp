@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_notify_previews.h"
+#include "novagram/nova_muted_members.h"
 #include "novagram/nova_read_status.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
@@ -256,6 +257,7 @@ Session::Session(
 		// deferred chain rather than in the constructor body.
 		NovaGram::Start(this);
 		NovaGram::StartReadStatus(this);
+		NovaGram::StartMutedMembers(this);
 		NovaGram::StartNotifyPreviews(this);
 	} }).dispatch();
 

@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
+#include "novagram/nova_metadata.h"
 #include "base/unixtime.h"
 #include "base/random.h"
 #include "editor/scene/scene_item_sticker.h"
@@ -49,6 +50,11 @@ constexpr auto kThumbnailQuality = 87;
 constexpr auto kThumbnailSize = 320;
 constexpr auto kPhotoUploadPartSize = 32 * 1024;
 constexpr auto kRecompressAfterBpp = 4;
+
+// NovaGram: stripping reads the whole file into memory, so a picture that is
+// somehow enormous is sent as it is rather than swapping the machine to death.
+// Nothing photographic comes close to this.
+constexpr auto kMaxStripMetadataSize = qint64(256 * 1024 * 1024);
 
 using Ui::ValidateThumbDimensions;
 
@@ -175,17 +181,35 @@ struct PreparedFileThumbnail {
 		QImage &full,
 		const QByteArray &bytes,
 		const QByteArray &format) {
-	if (!bytes.isEmpty()
+	// NovaGram: every return of this function is the JPEG that goes on the
+	// wire, so the strip is applied to all of them at once. It matters most in
+	// the two branches that do not re-encode: a photograph small enough to be
+	// sent as it is keeps every Exif tag it came with, and the progressive
+	// rewrite carries the application blocks across on purpose.
+	const auto stripped = [](QByteArray bytes) {
+		return NovaGram::StripImageMetadata(bytes);
+	};
+	// A photograph that says "turn me" in its Exif block cannot be both
+	// stripped and passed through: `full` has already been turned by the
+	// reader, and the size that goes on the wire is taken from it, so bytes
+	// with the note cut off would arrive sideways and the wrong way up
+	// against a declared size that assumes otherwise. Re-encoding is the
+	// answer and not a compromise - it bakes the rotation into the pixels,
+	// after which there is no note left to lose.
+	const auto rotated = NovaGram::StripMetadataEnabledForTask()
+		&& NovaGram::JpegNeedsRotation(bytes);
+	if (!rotated
+		&& !bytes.isEmpty()
 		&& (bytes.size()
 			<= full.width() * full.height() * kRecompressAfterBpp / 8)
 		&& (format == u"jpeg"_q)) {
 		if (!Images::IsProgressiveJpeg(bytes)) {
 			if (const auto result = Images::MakeProgressiveJpeg(bytes)
 				; !result.isEmpty()) {
-				return result;
+				return stripped(result);
 			}
 		} else {
-			return bytes;
+			return stripped(bytes);
 		}
 	}
 
@@ -197,7 +221,7 @@ struct PreparedFileThumbnail {
 	writer.write(full);
 	buffer.close();
 
-	return result;
+	return stripped(result);
 }
 
 } // namespace
@@ -966,6 +990,41 @@ void FileLoadTask::process(ProcessArgs &&args) {
 			thumbnail = PrepareFileThumbnail(std::move(fullimage));
 		}
 	}
+	// NovaGram: files sent as files, which is the path that uploads the picked
+	// bytes exactly as they are. Done after the name, the mime type and the
+	// thumbnail have been taken from the original - so the recipient still
+	// sees the file called what it is called - and before the MTPDdocument is
+	// built, because that is where the size the recipient is told goes.
+	//
+	// The path is deliberately left in place. The uploader prefers `content`
+	// for what it sends and uses `filepath` only for the local reference, so
+	// the copy on this computer goes on being the user's own file, untouched -
+	// stripping is about what leaves the machine.
+	if (!isVoice
+		&& !isRound
+		&& (_type != SendMediaType::Photo)
+		&& NovaGram::StripMetadataEnabledForTask()
+		&& NovaGram::CanStripMetadata(filemime, filename)) {
+		auto source = _content;
+		if (source.isEmpty()
+			&& !_filepath.isEmpty()
+			&& (filesize > 0)
+			&& (filesize <= kMaxStripMetadataSize)) {
+			auto file = QFile(_filepath);
+			if (file.open(QIODevice::ReadOnly)) {
+				source = file.readAll();
+			}
+		}
+		if (!source.isEmpty()) {
+			auto cleaned = NovaGram::StripImageMetadata(source);
+			if (cleaned.size() != source.size()) {
+				_content = std::move(cleaned);
+				filesize = _content.size();
+				_result->filesize = filesize;
+			}
+		}
+	}
+
 	thumbnail = FinalizeFileThumbnail(
 		std::move(thumbnail),
 		filemime,

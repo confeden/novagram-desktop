@@ -999,8 +999,21 @@ QString SettingsLabel(not_null<Main::Session*> session) {
 	return FormatPeriod(PeriodHours(session));
 }
 
-QString PeerMenuText(not_null<PeerData*> peer) {
+QString PeerMenuText(not_null<PeerData*> peer, bool wholeGroup) {
 	const auto russian = UseRussianTexts();
+	// A rule is stored per chat, and a room is not a chat of its own: it shares
+	// the identifier of the group it lives in. So inside a room the entry does
+	// exactly what it does in the group, and has to say so - "here" would read
+	// as "in this room" and would be false for every other room next to it.
+	if (wholeGroup) {
+		return AppliesTo(peer)
+			? (russian
+				? u"Не удалять мои сообщения в этой группе"_q
+				: u"Keep my messages in this group"_q)
+			: (russian
+				? u"Удалять мои сообщения в этой группе"_q
+				: u"Auto-delete my messages in this group"_q);
+	}
 	return AppliesTo(peer)
 		? (russian
 			? u"Не удалять мои сообщения здесь"_q

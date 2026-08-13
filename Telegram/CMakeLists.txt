@@ -1586,12 +1586,18 @@ PRIVATE
     novagram/nova_decoy_server.h
     novagram/nova_erase.cpp
     novagram/nova_erase.h
+    novagram/nova_filenames.cpp
+    novagram/nova_filenames.h
+    novagram/nova_muted_members.cpp
+    novagram/nova_muted_members.h
     novagram/nova_read_status.cpp
     novagram/nova_read_status.h
     novagram/nova_keypad.cpp
     novagram/nova_keypad.h
     novagram/nova_marquee_button.cpp
     novagram/nova_marquee_button.h
+    novagram/nova_metadata.cpp
+    novagram/nova_metadata.h
     novagram/nova_night_silent.cpp
     novagram/nova_night_silent.h
     novagram/nova_notify_previews.cpp

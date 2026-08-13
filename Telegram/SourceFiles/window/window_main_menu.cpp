@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/event_filter.h"
 #include "base/qt_signal_producer.h"
 #include "boxes/about_box.h"
+#include "boxes/connection_box.h"
 #include "boxes/peer_list_controllers.h"
 #include "boxes/premium_preview_box.h"
 #include "calls/group/calls_group_common.h"
@@ -37,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_pin.h"
 #include "main/main_session_settings.h"
 #include "mtproto/mtproto_config.h"
 #include "settings/sections/settings_advanced.h"
@@ -791,6 +793,27 @@ void MainMenu::setupMenu() {
 			_nightThemeSwitches.fire_copy(*darkMode);
 		}
 	}, _nightThemeToggle->lifetime());
+
+	// Right under the night mode. The proxy box is what someone whose
+	// connection has just been cut reaches for, and stock Telegram keeps it
+	// three levels deep, in Settings > Advanced > Connection type. The row
+	// opens the same box, it is only closer.
+	//
+	// Hidden in the decoy, like the settings section is: the criterion here
+	// is not "does it say NovaGram out loud" but "does this drawer read as an
+	// ordinary Telegram", and no Telegram build has a proxy row here. In the
+	// decoy the box would also be useless - the network is cut, so nothing it
+	// saved could ever connect.
+	if (!NovaGram::Decoy::Active()) {
+		addAction(
+			rpl::single(NovaGram::UseRussianTexts()
+				? u"Прокси"_q
+				: u"Proxy"_q),
+			{ &st::menuIconNetwork }
+		)->setClickedCallback([=] {
+			ProxiesBoxController::Show(controller);
+		});
+	}
 }
 
 void MainMenu::resizeEvent(QResizeEvent *e) {

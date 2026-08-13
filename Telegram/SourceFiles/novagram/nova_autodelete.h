@@ -67,6 +67,11 @@ void EnqueueNow(
 [[nodiscard]] QString SettingsTitle();
 [[nodiscard]] QString SettingsLabel(not_null<Main::Session*> session);
 [[nodiscard]] QString FormatPeriod(int hours);
-[[nodiscard]] QString PeerMenuText(not_null<PeerData*> peer);
+// `wholeGroup` is for the menu of a forum room: the rule is stored for the
+// group the room belongs to, so the entry names the group instead of saying
+// "here".
+[[nodiscard]] QString PeerMenuText(
+	not_null<PeerData*> peer,
+	bool wholeGroup = false);
 
 } // namespace NovaGram

@@ -54,6 +54,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "window/window_peer_menu.h"
 #include "main/main_session.h"
+#include "novagram/nova_muted_members.h"
 #include "media/player/media_player_instance.h"
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
@@ -2792,6 +2793,16 @@ void ListWidget::paintUserpics(
 						st::msgPhotoSize));
 			}
 			if (const auto from = item->displayFrom()) {
+				// NovaGram: the twin of the mark in HistoryInner. Topics,
+				// pinned, scheduled and saved sublists all draw their messages
+				// through this widget, and without this the collapsed row of a
+				// muted member would appear there with an ordinary, bright
+				// userpic - the one thing that says it is muted and not broken.
+				const auto novaMuted = NovaGram::ItemCollapsed(item);
+				const auto novaOpacity = p.opacity();
+				if (novaMuted) {
+					p.setOpacity(novaOpacity * 0.5);
+				}
 				from->paintUserpicLeft(
 					p,
 					_userpics[from],
@@ -2799,6 +2810,15 @@ void ListWidget::paintUserpics(
 					userpicTop,
 					view->width(),
 					st::msgPhotoSize);
+				if (novaMuted) {
+					NovaGram::PaintMutedMark(
+						p,
+						st::historyPhotoLeft,
+						userpicTop,
+						st::msgPhotoSize,
+						novaOpacity);
+					p.setOpacity(novaOpacity);
+				}
 			} else if (const auto info = item->displayHiddenSenderInfo()) {
 				if (info->customUserpic.empty()) {
 					info->emptyUserpic.paintCircle(

@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwidget.h"
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
+#include "novagram/nova_filenames.h"
 #include "data/stickers/data_stickers.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
@@ -169,6 +170,10 @@ QString FileNameUnsafe(
 		if (!QDir().exists(path)) QDir().mkpath(path);
 		return filedialogDefaultName(prefix, name, path);
 	}
+	// NovaGram: only this branch, which is the one that writes a file without
+	// asking. The dialog above returned already, so a deliberate "Save as"
+	// keeps the name the user sees and picks.
+	name = NovaGram::MaskLocalFileName(name);
 	if (dir.path() != u"."_q) {
 		path = dir.absolutePath() + '/';
 	}
@@ -223,12 +228,23 @@ QString FileNameForSave(
 QString DocumentFileNameForSave(
 		not_null<const DocumentData*> data,
 		bool forceSavingAs,
-		const QString &already,
+		const QString &alreadyOnDisk,
 		const QDir &dir) {
 	auto alreadySavingFilename = data->loadingFilePath();
 	if (!alreadySavingFilename.isEmpty()) {
 		return alreadySavingFilename;
 	}
+
+	// NovaGram: `already` is the name of the copy that is on this disk, and
+	// with masked names that copy is called a meaningless token. Reusing it as
+	// the default of a Save-as dialog would take away the one escape hatch the
+	// setting promises: the box would come up with the token in it, and the
+	// real name could only be retyped by hand off the message. Offer the
+	// sender's name instead, which is what upstream does when there is no
+	// copy yet.
+	const auto already = (forceSavingAs && NovaGram::MaskedFileNamesEnabled())
+		? QString()
+		: alreadyOnDisk;
 
 	QString name, filter, caption, prefix;
 	const auto mimeType = Core::MimeTypeForName(data->mimeString());

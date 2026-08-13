@@ -56,6 +56,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
+#include "novagram/nova_muted_members.h"
 #include "settings/sections/settings_premium.h"
 #include "ui/text/text_options.h"
 #include "ui/painter.h"
@@ -1683,6 +1684,17 @@ int Message::marginBottom() const {
 }
 
 void Message::draw(Painter &p, const PaintContext &context) const {
+	// NovaGram: before countGeometry() is consulted at all. A collapsed row
+	// never goes through the ordinary sizing pass - resizeContentGetHeight
+	// returns before any of it - so its geometry is degenerate and the width
+	// check below would drop the row without drawing anything. That is exactly
+	// what happened: the userpic was dimmed and crossed by the list, and the
+	// row itself was never painted.
+	if (novaCollapsed()) {
+		paintNovaCollapsed(p, context);
+		return;
+	}
+
 	auto g = countGeometry();
 	if (g.width() < 1) {
 		return;
@@ -2929,6 +2941,91 @@ void Message::paintViaBotIdInfo(
 	}
 }
 
+bool Message::novaCollapsed() const {
+	return NovaGram::ItemCollapsed(data());
+}
+
+ClickHandlerPtr Message::novaExpandLink() const {
+	// Cached in the module, not built here: the click machinery compares
+	// handlers by pointer, so a fresh object on every hover would mean the one
+	// pressed is never the one released and the click would be lost.
+	return NovaGram::ExpandLink(data());
+}
+
+// Where the list draws the userpic of this collapsed row, in element
+// coordinates: bottom aligned, at the left edge every message uses.
+QRect Message::novaCollapsedUserpicRect() const {
+	const auto size = int(st::msgPhotoSize);
+	return QRect(
+		st::historyPhotoLeft,
+		height() - marginBottom() - size,
+		size,
+		size);
+}
+
+// NovaGram: the collapsed row of a muted member. Everything about it is chosen
+// so that the eye does not stop here - that is the whole function - while still
+// answering "who" and "why is this one line": the sender's short name, a small
+// circle where the userpic would be, and a thin cross over it. Drawn by hand,
+// which is also the only way the opacity survives: the ordinary painting path
+// resets it to 1 in dozens of places.
+void Message::paintNovaCollapsed(
+		Painter &p,
+		const PaintContext &context) const {
+	const auto stm = context.messageStyle();
+	const auto photo = int(st::msgPhotoSize);
+	// Where the list draws the userpic: bottom aligned inside the element.
+	const auto photoTop = height() - marginBottom() - photo;
+
+	// The cross over the userpic is drawn by whoever paints that userpic - the
+	// chat list does it after the messages, so a mark drawn here would be
+	// covered by it. See NovaGram::PaintMutedMark.
+
+	// Laid out from the element's own width rather than from countGeometry():
+	// nothing computed the ordinary geometry for this row, and asking for it
+	// gives an empty rectangle.
+	const auto contentLeft = st::msgMargin.left() + st::msgPhotoSkip;
+	const auto contentWidth = width() - contentLeft - st::msgMargin.right();
+	if (contentWidth < 1) {
+		return;
+	}
+
+	const auto text = NovaGram::MutedMessageText();
+	const auto font = st::msgFont;
+	const auto padding = QMargins(
+		st::msgPadding.left(),
+		st::msgDateImgPadding.y(),
+		st::msgPadding.right(),
+		st::msgDateImgPadding.y());
+	const auto bubbleHeight = font->height + padding.top() + padding.bottom();
+	const auto available = contentWidth - padding.left() - padding.right();
+	if (available <= 0) {
+		return;
+	}
+	const auto elided = font->elided(text, available);
+	const auto bubble = QRect(
+		contentLeft,
+		photoTop + (photo - bubbleHeight) / 2,
+		std::min(
+			font->width(elided) + padding.left() + padding.right(),
+			contentWidth),
+		bubbleHeight);
+
+	const auto opacity = p.opacity();
+	// Half transparent, all of it: the bubble as much as the words in it. A
+	// row that says only "there is something here" is the whole promise of the
+	// feature, and it has to be legible without being loud.
+	p.setOpacity(opacity * 0.5);
+	Ui::FillRoundRect(p, bubble, stm->msgBg, stm->msgBgCornersSmall);
+	p.setPen(stm->historyTextFg);
+	p.setFont(font);
+	p.drawText(
+		bubble.left() + padding.left(),
+		bubble.top() + padding.top() + font->ascent,
+		elided);
+	p.setOpacity(opacity);
+}
+
 void Message::paintText(
 		Painter &p,
 		QRect &trect,
@@ -3161,6 +3258,14 @@ void Message::paintRichText(
 }
 
 PointState Message::pointState(QPoint point) const {
+	// NovaGram: before countGeometry(), same reason as in draw() - a collapsed
+	// row has no ordinary geometry, and the width check below would call it
+	// outside. The whole row is one target, so the click that unfolds it does
+	// not have to find the text inside.
+	if (novaCollapsed()) {
+		return PointState::Inside;
+	}
+
 	auto g = countGeometry();
 	if (g.width() < 1 || isHidden()) {
 		return PointState::Outside;
@@ -3726,6 +3831,10 @@ void Message::unloadHeavyPart() {
 }
 
 bool Message::hasFromPhoto() const {
+	// NovaGram: the userpic of a muted member stays exactly where it was, at
+	// its usual size. It is the only way back: right-clicking it is what opens
+	// the menu that turns muting off, and without it the user cannot even see
+	// whom they have muted. The row is made tall enough to hold it.
 	if (isHidden()) {
 		return false;
 	}
@@ -3791,6 +3900,22 @@ TextState Message::textState(
 		? visibleMediaTextLen
 		: 0;
 	SetTextStatePosition(&result, minSymbol, false);
+
+	// NovaGram: before countGeometry(), same reason as in draw(). The collapsed
+	// row answers with one link, and clicking it unfolds this message. Nothing
+	// inside can be reached while it is a single line, which is the point: the
+	// layouts that would answer here describe content that is not on screen.
+	//
+	// The userpic is left out of it deliberately. The list only hit-tests the
+	// userpic when nothing else claimed the point, so a link covering it would
+	// swallow the right click that opens the menu holding "unmute" - which is
+	// the way back out of muting.
+	if (novaCollapsed()) {
+		if (!novaCollapsedUserpicRect().contains(point)) {
+			result.link = novaExpandLink();
+		}
+		return result;
+	}
 
 	auto g = countGeometry();
 	if (g.width() < 1 || isHidden()) {
@@ -6359,6 +6484,13 @@ Ui::BubbleRounding Message::countBubbleRounding() const {
 int Message::resizeContentGetHeight(int newWidth) {
 	if (isHidden()) {
 		return marginTop() + marginBottom();
+	} else if (novaCollapsed()) {
+		// NovaGram: one line, but never shorter than the userpic drawn beside
+		// it - that userpic is the way back out of muting and must not overlap
+		// the message above.
+		return marginTop()
+			+ std::max(st::msgNameFont->height, int(st::msgPhotoSize))
+			+ marginBottom();
 	} else if (newWidth < st::msgMinWidth) {
 		return height();
 	}

@@ -68,6 +68,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_erase.h"
+#include "novagram/nova_muted_members.h"
 #include "novagram/nova_read_status.h"
 #include "apiwrap.h"
 #include "mainwidget.h"
@@ -1534,7 +1535,7 @@ void Filler::addNovaAutoDelete() {
 		return;
 	}
 	const auto applies = NovaGram::AppliesTo(peer);
-	_addAction(NovaGram::PeerMenuText(peer), [=] {
+	_addAction(NovaGram::PeerMenuText(peer, _topic != nullptr), [=] {
 		// An explicit choice always wins over the automatic default, so the
 		// rule is stored instead of just flipping a flag: otherwise gaining or
 		// losing admin rights would silently change what the user picked.
@@ -1870,6 +1871,13 @@ void Filler::fillChatsListActions() {
 	addNewMembers();
 	addBoostChat();
 	addVideoChat();
+	// This is the menu of a group whose rooms are shown as a list, and it is
+	// the group's own menu, so the entries mean what they say. Without them the
+	// same group had the fork's per-chat entries only while it was set to be
+	// shown as one chat, which made a privacy promise depend on a display
+	// preference.
+	addNovaAutoDelete();
+	addNovaEraseEvidence();
 	_addAction(PeerMenuCallback::Args{ .isSeparator = true });
 	addReport();
 	if (_peer->asChannel()->amIn()) {
@@ -1988,6 +1996,26 @@ void Filler::fillRepliesActions() {
 	addBoostChat();
 	addCreatePoll();
 	addCreateTodoList();
+	// A group whose rooms are shown separately never opens through
+	// fillHistoryActions, so until this was added the auto-delete override
+	// existed only in groups viewed as one chat: the same group, opened the
+	// other way, silently had none. The rule is stored per chat and a room
+	// shares its group's identifier, so it means the same thing here, and the
+	// entry says "in this group" rather than "here".
+	//
+	// Only inside a real room. This section also serves the comment thread
+	// under a channel post, where the peer is the linked discussion group and
+	// "here" would be read as "in this thread" - and where the Android half
+	// offers nothing, so adding it would make the two platforms promise
+	// different things.
+	//
+	// Erase evidence is deliberately not here. It walks the whole peer and
+	// would destroy the user's messages in every room of the group, while its
+	// own confirmation says "in this chat". It stays in the group's own menu,
+	// which is where that sentence is true.
+	if (_topic) {
+		addNovaAutoDelete();
+	}
 	addToggleTopicClosed();
 	addDeleteTopic();
 }
@@ -4329,6 +4357,21 @@ void FillSenderUserpicMenu(
 					},
 					&st::menuIconEdit);
 			}
+		}
+	}
+
+	// NovaGram: last, below everything the stock client puts here. groupPeer is
+	// exactly the condition the feature needs - it is set only for a chat or a
+	// megagroup, that is, a conversation of more than two people, where a
+	// member speaks for themselves.
+	if (const auto user = peer->asUser()) {
+		if (groupPeer && !user->isSelf() && NovaGram::MutableChat(groupPeer)) {
+			const auto muted = NovaGram::MemberMuted(groupPeer, user);
+			addAction(NovaGram::MuteMemberMenuText(muted), [=] {
+				controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+					NovaGram::MuteMemberBox(box, groupPeer, user);
+				}));
+			}, muted ? &st::menuIconUnmute : &st::menuIconMute);
 		}
 	}
 }

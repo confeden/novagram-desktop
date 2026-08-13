@@ -14,7 +14,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_filenames.h"
 #include "novagram/nova_marquee_button.h"
+#include "novagram/nova_metadata.h"
 #include "novagram/nova_update.h"
 #include "novagram/nova_night_silent.h"
 #include "novagram/nova_notify_previews.h"
@@ -28,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/notifications_manager.h"
@@ -43,74 +46,66 @@ using namespace Settings;
 constexpr auto kHideNotificationContentKey
 	= "novagram_hide_notification_content"_cs;
 
+// Every description in this section is deliberately one or two sentences: what
+// the switch does, and the one honest boundary that changes a decision. The
+// full reasoning lives in docs/ROADMAP.md, not on screen - a wall of text in
+// the settings is not read, and a caveat nobody reads has not been given.
+
 [[nodiscard]] QString PinAbout() {
 	return UseRussianTexts()
-		? u"Основной PIN шифрует локальные данные NovaGram: без него база "
-			"на диске не читается. Аварийный PIN вводится под принуждением и "
-			"вместо разблокировки уничтожает локальные данные.\n\nПри "
-			"включённом режиме PIN разблокировка через Windows Hello "
-			"отключается: она открывала бы NovaGram в обход аварийного "
-			"PIN."_q
-		: u"The primary PIN encrypts the local NovaGram data: without it the "
-			"database on disk cannot be read. The emergency PIN is entered "
-			"under coercion and destroys the local data instead of "
-			"unlocking.\n\nWhile the PIN mode is on, the Windows Hello unlock "
-			"is disabled: it would open NovaGram bypassing the emergency "
-			"PIN."_q;
+		? u"Основной PIN шифрует локальные данные: без него база на диске не "
+			"читается. Аварийный PIN вводится под принуждением и вместо "
+			"разблокировки уничтожает данные. Пока PIN задан, разблокировка "
+			"через Windows Hello отключена."_q
+		: u"The primary PIN encrypts the local data: without it the database "
+			"on disk cannot be read. The emergency PIN is entered under "
+			"coercion and destroys the data instead of unlocking. While a PIN "
+			"is set, the Windows Hello unlock is disabled."_q;
 }
 
 [[nodiscard]] QString KeypadAbout() {
 	return UseRussianTexts()
-		? u"Экранная клавиатура позволяет ввести PIN мышкой, а её цифры "
-			"каждый раз располагаются в новом порядке, поэтому по движению "
-			"курсора или по следам на экране нельзя восстановить PIN."_q
-		: u"The on-screen keypad allows entering the PIN with the mouse, and "
-			"its digits are laid out in a new order every time, so the PIN "
-			"cannot be recovered from cursor movements or screen smudges."_q;
+		? u"Ввод PIN мышью. Цифры каждый раз располагаются в новом порядке, "
+			"поэтому по движению курсора и следам на экране PIN не "
+			"восстановить."_q
+		: u"Enter the PIN with the mouse. The digits are laid out in a new "
+			"order every time, so the PIN cannot be recovered from cursor "
+			"movements or screen smudges."_q;
 }
 
 [[nodiscard]] QString ScreenGuardAbout() {
 	return UseRussianTexts()
-		? u"Окна NovaGram исключаются из захвата экрана: снимок экрана, "
-			"запись и демонстрация экрана не увидят содержимое переписки. "
-			"Защита не действует против камеры, направленной на монитор, и "
-			"против программ уровня ядра. Выключайте её, только если "
-			"действительно нужно показать NovaGram на записи."_q
+		? u"Окна NovaGram исключаются из захвата экрана: снимок, запись и "
+			"демонстрация экрана не увидят переписку. Не защищает от камеры, "
+			"направленной на монитор."_q
 		: u"NovaGram windows are excluded from screen capture: screenshots, "
 			"recording and screen sharing will not see the conversation. It "
-			"does not protect against a camera pointed at the monitor or "
-			"against kernel level software. Turn it off only when NovaGram "
-			"really has to be visible in a recording."_q;
+			"does not protect against a camera pointed at the monitor."_q;
 }
 
 [[nodiscard]] QString NightSilentAbout() {
 	return UseRussianTexts()
-		? u"С 22:00 до 07:00 по местному времени этого устройства исходящие "
-			"сообщения отправляются без звука уведомления у получателя. "
-			"Сообщение доставляется как обычно и видно в чате, беззвучным "
-			"становится только уведомление. Время проверяется в момент "
-			"отправки, поэтому отложенное сообщение получает признак по "
-			"времени фактической отправки."_q
-		: u"Between 22:00 and 07:00 in the local time of this device, "
-			"outgoing messages are sent without a notification sound for the "
-			"recipient. The message is delivered as usual and is visible in "
-			"the chat, only the notification becomes silent. The time is "
-			"checked at the moment of sending, so a scheduled message follows "
-			"the time it is actually sent."_q;
+		? u"С 22:00 до 07:00 по местному времени исходящие сообщения приходят "
+			"получателю без звука. Сообщение доставляется как обычно, "
+			"беззвучным становится только уведомление."_q
+		: u"Between 22:00 and 07:00 in local time, outgoing messages arrive "
+			"without a notification sound. The message is delivered as usual; "
+			"only the notification is silent."_q;
 }
 
 not_null<Button*> AddToggle(
 		not_null<Ui::VerticalLayout*> container,
 		const QString &text,
 		bool checked,
-		Fn<void(bool)> changed) {
+		Fn<void(bool)> changed,
+		const style::SettingsButton &st = st::settingsButtonNoIcon) {
 	// Not AddButtonWithIcon: these titles are long enough to be cut off, and
 	// MarqueeButton scrolls the rest into view while the cursor is on the row.
 	const auto button = container->add(
 		object_ptr<MarqueeButton>(
 			container,
 			text,
-			st::settingsButtonNoIcon));
+			st));
 	button->toggleOn(rpl::single(checked));
 	button->toggledChanges(
 	) | rpl::on_next([=](bool toggled) {
@@ -251,28 +246,15 @@ void PeriodBox(
 
 [[nodiscard]] QString AutoDeleteAbout() {
 	return UseRussianTexts()
-		? u"Свои отправленные сообщения удаляются по истечении срока: сначала "
-			"текст заменяется на «.», через минуту сообщение удаляется у обеих "
-			"сторон. Если сообщение уже нельзя отредактировать, оно просто "
-			"удаляется; так же удаляются медиа — замена подписи оставила бы сам "
-			"файл. Telegram обычно разрешает редактирование 48 часов, а это "
-			"меньше здешнего срока, поэтому большинство сообщений удаляется без "
-			"шага с заменой.\n\nОтсчёт идёт от момента отправки. Сообщения, "
-			"отправленные до включения функции, в очередь не попадают: для них "
-			"есть «Erase evidence» в меню чата. В чатах, где у вас есть права "
-			"администратора, функция по умолчанию не применяется, а «Избранное» "
-			"не трогается никогда."_q
-		: u"Your own sent messages are removed once the period passes: first "
-			"the text is replaced with \".\", a minute later the message is "
-			"deleted for both sides. A message that can no longer be edited is "
-			"simply deleted, and so is media: replacing a caption would leave "
-			"the file. Telegram usually allows editing for 48 hours, which is "
-			"shorter than the period here, so most messages are deleted without "
-			"the text step.\n\nThe countdown starts when the message is sent. "
-			"Messages sent before the feature was switched on are not queued; "
-			"use Erase evidence in the chat menu for those. Chats where you "
-			"have admin rights are excluded by default, and Saved Messages are "
-			"never touched."_q;
+		? u"Свои отправленные сообщения удаляются по истечении срока, отсчёт "
+			"идёт от отправки. Отправленные до включения функции не удаляются "
+			"— для них есть «Erase evidence» в меню чата. Чаты с правами "
+			"администратора и «Избранное» не затрагиваются."_q
+		: u"Your own sent messages are deleted once the period passes, counted "
+			"from the moment they were sent. Messages sent before this was "
+			"switched on are not queued — use Erase evidence in the chat menu "
+			"for those. Chats where you have admin rights and Saved Messages "
+			"are left alone."_q;
 }
 
 void FillAutoDelete(
@@ -329,34 +311,16 @@ void FillAutoDelete(
 
 [[nodiscard]] QString ReadStatusAbout() {
 	return UseRussianTexts()
-		? u"Когда вам пишет незнакомец, а вы ещё не отвечали, NovaGram не "
-			"сообщает ему о прочтении: галочки прочтения у него не "
-			"появляются. Правило заводится в момент, когда такое сообщение "
-			"приходит, и дальше не меняется; переписки, которые уже шли до "
-			"включения настройки, она не затрагивает. Группы, каналы, боты и "
-			"«Избранное» не затрагиваются никогда.\n\nПобочный эффект: "
-			"для Telegram сообщения остаются непрочитанными, поэтому счётчик "
-			"непрочитанного может возвращаться после перезапуска и на других "
-			"устройствах. Отключить скрытие можно в самом диалоге — плашкой "
-			"над перепиской или из меню чата, — и это необратимо. Скрытие "
-			"снимается и само: любое ваше сообщение в таком диалоге, "
-			"отправленное с любого устройства, снимает его — ответ и так "
-			"говорит собеседнику, что вы прочитали. Черновик и служебные "
-			"сообщения не в счёт."_q
-		: u"When a stranger writes to you and you have not answered yet, "
-			"NovaGram does not tell them that you read it: the read marks "
-			"never appear for them. The rule is made when such a message "
-			"arrives and does not change afterwards; conversations that were "
-			"already going before the setting was switched on are left alone. "
-			"Groups, channels, bots and Saved Messages are never touched."
-			"\n\nSide effect: for Telegram the messages stay "
-			"unread, so the unread counter can come back after a restart and "
-			"on other devices. Hiding can be turned off in the dialog itself "
-			"— from the note above the chat or from the chat menu — and that "
-			"cannot be undone. It also stops by itself: any message you send "
-			"to such a dialog, from any device, lifts it — an answer tells "
-			"the other side that you read it anyway. Drafts and service "
-			"messages do not count."_q;
+		? u"Когда вам пишет незнакомец, а вы ещё не отвечали, галочки "
+			"прочтения ему не отправляются. Правило заводится по первому "
+			"такому сообщению; группы, каналы, боты и «Избранное» не "
+			"затрагиваются. Любой ваш ответ снимает скрытие, а для Telegram "
+			"такая переписка остаётся непрочитанной."_q
+		: u"When a stranger writes to you and you have not answered yet, the "
+			"read marks are never sent to them. The rule is made on the first "
+			"such message; groups, channels, bots and Saved Messages are left "
+			"alone. Any answer of yours lifts it, and for Telegram such a "
+			"conversation stays unread."_q;
 }
 
 void FillReadStatus(
@@ -375,94 +339,82 @@ void FillReadStatus(
 	Ui::AddDividerText(container, rpl::single(ReadStatusAbout()));
 }
 
+[[nodiscard]] QString FileNamesAbout() {
+	return UseRussianTexts()
+		? u"Файл, сохранённый без вопроса, получает обезличенное имя вместо "
+			"присланного, поэтому список папки «Загрузки» ничего не "
+			"рассказывает. Явное «Сохранить как» имя не меняет."_q
+		: u"A file saved without asking gets a meaningless name instead of the "
+			"one it came with, so a listing of the Downloads folder tells "
+			"nothing. An explicit Save as keeps the name."_q;
+}
+
+[[nodiscard]] QString StripMetadataAbout() {
+	return UseRussianTexts()
+		? u"Из отправляемых JPEG и PNG вырезаются блоки метаданных — Exif, XMP, "
+			"IPTC, комментарии, — то есть камера, время и координаты съёмки. "
+			"Остальные форматы, включая HEIC, PDF и видео, уходят как есть."_q
+		: u"Metadata blocks - Exif, XMP, IPTC, comments - are cut out of the "
+			"JPEG and PNG files you send, which is the camera, the time and the "
+			"place. Other formats, HEIC, PDF and video among them, are sent as "
+			"they are."_q;
+}
+
+void FillFiles(not_null<Ui::VerticalLayout*> container) {
+	const auto russian = UseRussianTexts();
+
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(russian ? u"Файлы"_q : u"Files"_q));
+
+	AddToggle(
+		container,
+		MaskedFileNamesTitle(),
+		MaskedFileNamesEnabled(),
+		[](bool toggled) { SetMaskedFileNamesEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(FileNamesAbout()));
+
+	Ui::AddSkip(container);
+	AddToggle(
+		container,
+		StripMetadataTitle(),
+		StripMetadataEnabled(),
+		[](bool toggled) { SetStripMetadataEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(StripMetadataAbout()));
+}
+
 [[nodiscard]] QString NotifyPreviewsAbout() {
 	return UseRussianTexts()
-		? u"Текст сообщения в push-уведомление кладёт не клиент, а Telegram: "
-			"сервер составляет его у себя, шифрует и отдаёт Google или Apple "
-			"для доставки на телефон. Переключатель говорит аккаунту так не "
-			"делать — серверу уходит show_previews=false, и в push остаётся "
-			"имя отправителя без текста. На телефоне текст появляется "
-			"мгновением позже, уже из самого сообщения, которое клиент "
-			"получает по своему соединению.\n\nНа этом компьютере не меняется "
-			"ничего: у NovaGram для ПК своего push нет, всё приходит по её "
-			"собственному соединению. Настройка принадлежит аккаунту, а не "
-			"устройству, поэтому отправлять её обязан и ПК: аккаунт слушает "
-			"того клиента, который сказал последним.\n\nЧем это оплачено. "
-			"Настройка видна во всех остальных клиентах и на всех "
-			"устройствах — там она выглядит как выключенный показ текста в "
-			"уведомлениях. На телефоне при экономии батареи, в режиме Doze "
-			"или без сети текст может не подгрузиться вовсе, и в уведомлении "
-			"останется одно имя. Выключение переключателя ничего не "
-			"возвращает: клиент знает только то значение, которое сам туда и "
-			"положил. Показ текста включается обратно стоковыми настройками "
-				"уведомлений Telegram — но не отсюда: на ПК такого "
-				"переключателя нет вовсе, стоковые флажки «Имя» и «Текст» в "
-				"настройках уведомлений меняют только вид уведомления на этом "
-				"компьютере и серверу не отправляются. Вернуть показ текста "
-				"можно из мобильного клиента. Тем же значением "
-				"Telegram управляет уведомлениями о реакциях: в push на "
-				"телефон не попадёт имя того, кто поставил реакцию — на этом "
-				"компьютере оно по-прежнему видно.\n\nЧего это не чинит. "
-			"Google и Apple по-прежнему видят, что push доставлен, когда и "
-			"какого он размера. Чаты, для которых показ текста задан "
-			"отдельно, перекрываются по мере того, как загружается список "
-			"чатов."_q
-		: u"The text of a message is put into a push notification not by the "
-			"client but by Telegram: the server composes it, encrypts it and "
-			"hands it to Google or Apple for delivery to the phone. This "
-			"switch tells the account not to do that — the server is sent "
-			"show_previews=false, and the push carries the sender's name "
-			"without the text. On the phone the text appears a moment later, "
-			"taken from the message itself, which the client receives over "
-			"its own connection.\n\nOn this computer nothing changes: the "
-			"desktop NovaGram has no push of its own, everything arrives over "
-			"its own connection. The setting belongs to the account and not "
-			"to a device, so the desktop is obliged to send it too: the "
-			"account listens to whichever client spoke last.\n\nWhat it "
-			"costs. The setting is visible in every other client and on every "
-			"device, where it looks like message previews being turned off. "
-			"On the phone, under battery saving, in Doze or without network "
-			"the text may not load at all and the notification keeps only the "
-			"name. Turning this switch off restores nothing: the client knows "
-			"only the value it put there itself. Previews are turned back on "
-				"from the stock Telegram notification settings — but not from "
-				"here: the desktop has no such switch at all, and the stock "
-				"Name and Text checkboxes in its notification settings "
-				"only change how a notification looks on this computer and "
-				"are never sent to the server. Previews are restored from a "
-				"mobile client. Telegram governs the reaction notifications "
-				"by the same value: a push to the phone will not carry the "
-				"name of whoever reacted — on this computer it is still "
-				"visible.\n\nWhat it does not fix. Google and Apple still see "
-				"that a push "
-			"was delivered, when, and how large it was. Chats with a preview "
-			"setting of their own are overridden as the chat list loads."_q;
+		? u"Текст сообщения в push кладёт сервер Telegram, а не клиент. "
+			"Переключатель запрещает ему это для всего аккаунта: в push "
+			"остаётся имя отправителя, а текст подгружается на телефоне из "
+			"самого сообщения. Настройка аккаунтная — она видна во всех "
+			"остальных клиентах, и вернуть показ текста можно только из "
+			"мобильного."_q
+		: u"The text of a message is put into a push by the Telegram server, "
+			"not by the client. This switch forbids that for the whole "
+			"account: a push carries the sender's name, and the text is loaded "
+			"on the phone from the message itself. It is an account setting — "
+			"it shows up in every other client, and previews can only be "
+			"turned back on from a mobile one."_q;
 }
 
 [[nodiscard]] QString NotificationsAbout() {
 	return UseRussianTexts()
-		? u"Текст уведомления NovaGram собирает здесь, из уже полученного "
-			"сообщения, и никуда его не отправляет: у версии для ПК своего "
-			"push нет вовсе, поэтому утечки текста уведомлений на сторонние "
-			"серверы на этой платформе не происходит. Скрывать его от них "
-			"нечего, и переключатель поэтому неактивен — текст уведомления "
-			"показывается.\n\nЧто остаётся: уведомление видно тому, кто "
-			"смотрит на экран, и оседает в центре уведомлений Windows, пока "
-			"его не закроют. Убрать оттуда имя и текст можно стоковыми "
-			"флажками «Имя» и «Текст» в настройках уведомлений Telegram. "
-			"О тексте, который серверы Telegram кладут в push для телефона, "
-			"речь в переключателе выше."_q
-		: u"NovaGram composes the text of a notification here, out of a "
-			"message it already has, and sends it nowhere: the desktop "
-			"version has no push of its own, so on this platform the text of "
-			"a notification does not leak to any third-party server. There is "
-			"nothing to hide from them, which is why this switch is inactive "
-			"and the text is shown.\n\nWhat remains: a notification is "
-			"visible to whoever can see the screen and stays in the Windows "
-			"notification centre until it is dismissed. The stock Name and "
-			"Text checkboxes in the Telegram notification settings take those "
-			"away. The text that the Telegram servers put into a push for the "
-			"phone is what the switch above is about."_q;
+		? u"На ПК текст уведомления собирается здесь, из уже полученного "
+			"сообщения, и никуда не отправляется — скрывать его не от кого, "
+			"поэтому переключатель неактивен. Убрать имя и текст с экрана "
+			"можно стоковыми флажками в настройках уведомлений Telegram."_q
+		: u"On the desktop the text of a notification is composed here, out of "
+			"a message already received, and is sent nowhere — there is no one "
+			"to hide it from, which is why this switch is inactive. The stock "
+			"Name and Text checkboxes in the Telegram notification settings "
+			"take the name and the text off the screen."_q;
 }
 
 void FillNotifications(
@@ -567,24 +519,23 @@ void FillSending(not_null<Ui::VerticalLayout*> container) {
 
 [[nodiscard]] QString UpdateAbout() {
 	return UseRussianTexts()
-		? u"Раз в восемь часов NovaGram читает небольшой файл со сведениями о "
-			"последней версии на raw.githubusercontent.com. Это единственный "
-			"сетевой запрос NovaGram мимо Telegram, и по нему видно только "
-			"то, что клиент запущен: ни аккаунт, ни переписка в нём не "
-			"участвуют. Установщик проверяется по контрольной сумме из того "
-			"же файла и заменяет только программу — данные, профили и PIN "
-			"остаются на месте. В режиме заглушки проверка не выполняется "
-			"вообще."_q
-		: u"Every eight hours NovaGram reads a small file with the latest "
-			"version from raw.githubusercontent.com. It is the only network "
-			"request NovaGram makes outside Telegram, and all it reveals is "
-			"that the client is running: no account and no conversation take "
-			"part in it. The installer is verified against the checksum from "
-			"the same file and replaces only the program — data, profiles and "
-			"PINs stay where they are. In decoy mode the check does not run at "
-			"all."_q;
+		? u"Не чаще раза в восемь часов NovaGram читает файл о последней версии "
+			"на raw.githubusercontent.com — единственный сетевой запрос мимо "
+			"Telegram, по нему видно только то, что клиент запущен. "
+			"Установщик проверяется по контрольной сумме и заменяет только "
+			"программу: данные, профили и PIN остаются на месте."_q
+		: u"At most once every eight hours NovaGram reads a file with the "
+			"latest version from raw.githubusercontent.com — the only network "
+			"request it makes outside Telegram, and all it reveals is that the "
+			"client is running. The installer is verified against a checksum "
+			"and replaces only the program: data, profiles and PINs stay where "
+			"they are."_q;
 }
 
+// The line under the switch, the way the official client writes it: what the
+// checker is doing right now, or the version that is installed when it is doing
+// nothing. The action moved out of this line and onto the blue button below,
+// which is why "found" and "ready" read as states here and not as offers.
 [[nodiscard]] QString UpdateStateText(const Update::Status &status) {
 	const auto russian = UseRussianTexts();
 	switch (status.phase) {
@@ -599,20 +550,30 @@ void FillSending(not_null<Ui::VerticalLayout*> container) {
 			+ u"%"_q;
 	case Update::Phase::Ready:
 		return russian
-			? u"Установить и перезапустить"_q
-			: u"Install and restart"_q;
+			? u"Новая версия готова к установке"_q
+			: u"A new version is ready to install"_q;
 	case Update::Phase::Failed:
-		return russian
-			? u"Не удалось проверить обновления"_q
-			: u"Could not check for updates"_q;
-	case Update::Phase::UpToDate:
-		return russian
-			? u"Установлена последняя версия"_q
-			: u"The latest version is installed"_q;
+		// Two different failures wear the same phase, and telling the user
+		// that checking went wrong when the check succeeded and the download
+		// did not would send them looking in the wrong place.
+		return status.release.url.isEmpty()
+			? (russian
+				? u"Не удалось проверить обновления"_q
+				: u"Could not check for updates"_q)
+			: (russian
+				? u"Не удалось загрузить обновление"_q
+				: u"Could not download the update"_q);
 	}
-	return russian ? u"Проверить обновления"_q : u"Check for updates"_q;
+	return (russian ? u"Установлена версия "_q : u"Version installed: "_q)
+		+ AppVersion();
 }
 
+// Built to the same shape as the official update block in
+// settings/sections/settings_advanced.cpp: a taller switch with the state line
+// drawn inside it, and a blue button that covers the "check now" row as soon as
+// there is something to do. Upstream downloads by itself and therefore only
+// ever shows that button as "restart"; this checker downloads on request, so
+// the same button walks through offer, progress and install.
 void FillUpdates(not_null<Ui::VerticalLayout*> container) {
 	const auto russian = UseRussianTexts();
 
@@ -621,35 +582,68 @@ void FillUpdates(not_null<Ui::VerticalLayout*> container) {
 		container,
 		rpl::single(russian ? u"Обновления"_q : u"Updates"_q));
 
-	AddToggle(
+	const auto shown = container->lifetime().make_state<rpl::variable<bool>>(
+		Update::CheckEnabled());
+	const auto toggle = AddToggle(
 		container,
 		russian ? u"Проверять обновления"_q : u"Check for updates"_q,
 		Update::CheckEnabled(),
-		[](bool toggled) { Update::SetCheckEnabled(toggled); });
+		[=](bool toggled) {
+			Update::SetCheckEnabled(toggled);
+			*shown = toggled;
+		},
+		st::settingsUpdateToggle);
 
-	const auto state = AddButtonWithLabel(
-		container,
+	const auto state = Ui::CreateChild<Ui::FlatLabel>(
+		toggle,
 		Update::StatusValue() | rpl::map(UpdateStateText),
-		(Update::StatusValue()
-			| rpl::map([](const Update::Status &status) {
-				return (status.phase == Update::Phase::Found)
-					? (UseRussianTexts() ? u"Скачать"_q : u"Download"_q)
-					: AppVersion();
-			})),
-		st::settingsButton,
-		{ &st::menuIconDownload });
-	state->setClickedCallback([] {
-		switch (Update::Current().phase) {
-		case Update::Phase::Found: Update::Download(); return;
-		case Update::Phase::Ready: Update::InstallAndRestart(); return;
-		case Update::Phase::Checking:
-		case Update::Phase::Downloading: return;
-		}
-		Update::CheckNow();
-	});
+		st::settingsUpdateState);
+	state->setAttribute(Qt::WA_TransparentForMouseEvents);
+	rpl::combine(
+		toggle->widthValue(),
+		state->widthValue()
+	) | rpl::on_next([=] {
+		state->moveToLeft(
+			st::settingsUpdateStatePosition.x(),
+			st::settingsUpdateStatePosition.y());
+	}, state->lifetime());
+
+	const auto options = container->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			container,
+			object_ptr<Ui::VerticalLayout>(container)));
+	options->toggleOn(shown->value());
+	options->finishAnimating();
+
+	const auto inner = options->entity();
+	const auto check = inner->add(
+		object_ptr<Ui::SettingsButton>(
+			inner,
+			rpl::single(russian ? u"Проверить сейчас"_q : u"Check now"_q),
+			st::settingsButtonNoIcon));
+	check->setClickedCallback([] { Update::CheckNow(); });
+
+	// Covers the row above it rather than being added next to it, so that the
+	// block does not change height when an update appears. That is upstream's
+	// trick and the reason st::settingsUpdate exists.
+	const auto update = Ui::CreateChild<Ui::SettingsButton>(
+		check,
+		Update::StatusValue() | rpl::map(Update::ActionText),
+		st::settingsUpdate);
+	update->hide();
+	check->widthValue() | rpl::on_next([=](int width) {
+		update->resizeToWidth(width);
+		update->moveToLeft(0, 0);
+	}, update->lifetime());
+	update->setClickedCallback([] { Update::ActOnBar(); });
+
+	Update::StatusValue(
+	) | rpl::on_next([=](const Update::Status &status) {
+		update->setVisible(Update::BarVisible(status));
+	}, update->lifetime());
 
 	const auto notes = AddButtonWithIcon(
-		container,
+		inner,
 		rpl::single(russian ? u"Что нового"_q : u"What's new"_q),
 		st::settingsButton,
 		{ &st::menuIconInfo });
@@ -699,6 +693,7 @@ void NovaGramSection::setupContent() {
 		FillProtection(container, controller);
 		FillAutoDelete(container, controller);
 		FillReadStatus(container, controller);
+		FillFiles(container);
 		FillNotifications(container, controller);
 		FillSending(container);
 		if (!Decoy::Active()) {

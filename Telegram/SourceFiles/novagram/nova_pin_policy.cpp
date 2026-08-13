@@ -168,32 +168,15 @@ QString PinPolicyName(PinLockPolicy policy) {
 
 QString PinPolicyAbout() {
 	return UseRussianTexts()
-		? u"Выбранный вариант — единственное, что решает, когда PIN "
-			"спросят снова. Работает ровно то, что выбрано:\n\n• при "
-			"блокировке экрана (по умолчанию) — PIN спросят, как только "
-			"заблокирован Windows;\n• при сворачивании — как только окно ушло "
-			"с глаз, в том числе в трей;\n• через 10 или 60 минут "
-			"бездействия — PIN спросят по истечении срока, даже если окно всё "
-			"это время открыто;\n• только при запуске — один раз за запуск, и "
-			"дополнительно через сутки, потому что программа может не "
-			"закрываться неделями.\n\nСтоковая строка «Автоблокировка» в "
-			"настройках конфиденциальности — это тот же счётчик бездействия: "
-			"при двух вариантах со сроком там виден тот же срок, при "
-			"остальных трёх она не участвует. Настройка общая с "
-			"Android-версией NovaGram и называется там так же."_q
+		? u"Выбранный вариант — единственное, что решает, когда PIN спросят "
+			"снова. «Только при запуске» дополнительно истекает через сутки: "
+			"программа может не закрываться неделями. Стоковая "
+			"«Автоблокировка» в настройках конфиденциальности — тот же "
+			"счётчик бездействия."_q
 		: u"The chosen option is the only thing that decides when the PIN is "
-			"asked for again. What is chosen is what happens:\n\n• on screen "
-			"lock (the default) - the PIN is asked as soon as Windows is "
-			"locked;\n• on minimising - as soon as the window leaves the "
-			"screen, the tray included;\n• after 10 or 60 minutes of "
-			"inactivity - the PIN is asked when the period is up, even if the "
-			"window stayed open all that time;\n• only at start - once per "
-			"launch, and again after a day, because the application can stay "
-			"open for weeks.\n\nThe stock Auto-lock row in the privacy "
-			"settings is the same idle counter: with the two timed options it "
-			"shows the same period, with the other three it takes no part. "
-			"The setting is shared with the Android NovaGram and is named the "
-			"same there."_q;
+			"asked for again. \"Only at start\" also expires after a day: the "
+			"application can stay open for weeks. The stock Auto-lock row in "
+			"the privacy settings is the same idle counter."_q;
 }
 
 } // namespace NovaGram

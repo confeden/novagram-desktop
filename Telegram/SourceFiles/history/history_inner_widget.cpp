@@ -88,6 +88,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "novagram/nova_muted_members.h"
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
 #include "iv/iv_rich_message_html_export.h"
@@ -1737,6 +1738,15 @@ void HistoryInner::paintEvent(QPaintEvent *e) {
 						st::msgPhotoSize));
 			}
 			if (const auto from = item->displayFrom()) {
+				// NovaGram: the userpic of a muted member is dimmed and crossed
+				// out. It has to happen here rather than inside the message,
+				// because this loop runs after the messages are painted - a mark
+				// drawn there would end up underneath the userpic.
+				const auto novaMuted = NovaGram::ItemCollapsed(item);
+				const auto novaOpacity = p.opacity();
+				if (novaMuted) {
+					p.setOpacity(novaOpacity * 0.5);
+				}
 				Dialogs::Ui::PaintUserpic(
 					p,
 					from,
@@ -1747,6 +1757,15 @@ void HistoryInner::paintEvent(QPaintEvent *e) {
 					width(),
 					st::msgPhotoSize,
 					context.paused);
+				if (novaMuted) {
+					NovaGram::PaintMutedMark(
+						p,
+						st::historyPhotoLeft,
+						userpicTop,
+						st::msgPhotoSize,
+						novaOpacity);
+					p.setOpacity(novaOpacity);
+				}
 			} else if (const auto info = item->displayHiddenSenderInfo()) {
 				if (info->customUserpic.empty()) {
 					info->emptyUserpic.paintCircle(

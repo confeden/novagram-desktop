@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_update.h"
 #include "novagram/nova_seal.h"
 #include "platform/platform_integration.h"
 #include "settings.h"
@@ -556,6 +557,14 @@ void RunEmergencyWipe(const QString &pin) {
 	// Re-armed last, because the sweep above removes the marker together with
 	// everything else: the decoy must survive its own wipe.
 	Decoy::Arm(identity.firstName, identity.lastName, identity.phone);
+
+	// The update checker outlives the wipe - it is a process-wide object with
+	// its own timer - and the chat list the decoy builds next reads its phase.
+	// A release found before the emergency PIN would otherwise put a bar
+	// saying "Update NovaGram" across the bottom of the disguise, and a
+	// download in flight would go on running inside it.
+	Update::Stop();
+	QDir(cWorkingDir() + u"novagram_update/"_q).removeRecursively();
 
 	// The jump list was built at startup under the fork name and is not touched
 	// by arming; rebuild it now so a right-click on the taskbar button does not
