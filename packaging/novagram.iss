@@ -11,7 +11,7 @@
 ; The Telegram Desktop base, which is also what NovaGram releases under on this
 ; platform. The update check compares this number, so it has to match
 ; NovaGram::AppVersion(), that is Telegram/build/version.
-#define MyAppVersion "7.0.9.1"
+#define MyAppVersion "7.0.9.2"
 #define MyAppExeName "NovaGram.exe"
 
 [Setup]
