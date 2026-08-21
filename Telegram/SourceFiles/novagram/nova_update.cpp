@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "logs.h"
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_doh.h"
 #include "novagram/nova_pin.h"
 #include "settings.h"
 
@@ -21,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QCryptographicHash>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QProcess>
@@ -33,8 +35,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace NovaGram::Update {
 namespace {
 
-constexpr auto kManifestUrl = "https://raw.githubusercontent.com"
-	"/confeden/nova_updates/main/Novagram_PC.json";
+// The release itself, not a file describing it. Everything the check needs is
+// already there: the tag carries both bases, and every asset carries its name,
+// its size and a sha256 digest computed by GitHub. A separate manifest was one
+// more thing that could go stale - and did, once, at the cost of a release.
+//
+// /releases/latest skips drafts and prereleases, which is exactly the wanted
+// behaviour and removes the step where a freshly published release had to be
+// followed by a workflow run before any client could see it.
+constexpr auto kReleasesUrl = "https://api.github.com"
+	"/repos/confeden/Novagram/releases/latest";
 constexpr auto kEnabledKey = "novagram_update_check"_cs;
 constexpr auto kPeriod = crl::time(8 * 60 * 60 * 1000);
 
@@ -94,6 +104,12 @@ public:
 private:
 	void set(Phase phase);
 	void applyProxy(const QUrl &url);
+	void startDownload(QUrl target, QString verifyName, int hop);
+	void getResolved(
+		QUrl url,
+		int timeout,
+		int hop,
+		Fn<void(QNetworkReply*)> done);
 	void applyManifest(const QByteArray &body);
 	void finishDownload(const QByteArray &body);
 	void fail();
@@ -172,32 +188,96 @@ void Checker::start() {
 // blocked and the only way out is an MTProto proxy, the check fails - visibly,
 // thanks to the timeout, which is the whole of what can be promised here.
 void Checker::applyProxy(const QUrl &url) {
-	const auto &settings = Core::App().settings().proxy();
-	if (settings.isEnabled()) {
-		const auto proxy = settings.selected();
-		if (proxy.type == MTP::ProxyData::Type::Socks5
-			|| proxy.type == MTP::ProxyData::Type::Http) {
-			_manager.setProxy(
-				MTP::ToNetworkProxy(MTP::ToDirectIpProxy(proxy)));
+	// One policy for everything that leaves the Telegram network, resolver
+	// included - see NovaGram::Doh::ProxyFor.
+	_manager.setProxy(Doh::ProxyFor(url));
+}
+
+// Issues a GET through the fork's own resolver and nowhere else. The name is
+// turned into an address here; the request then goes to that address with the
+// name carried in SNI, in the certificate check and in the Host header.
+//
+// Redirects are followed by hand on purpose. GitHub sends the installer
+// download on to another host, and letting Qt follow a Location by name would
+// put the system resolver back into the middle of the one request this fork
+// promises to keep out of it.
+void Checker::getResolved(
+		QUrl url,
+		int timeout,
+		int hop,
+		Fn<void(QNetworkReply*)> done) {
+	if (hop > 5) {
+		LOG(("NovaGram update: too many redirects for %1.").arg(url.toString()));
+		done(nullptr);
+		return;
+	} else if (url.scheme() != u"https"_q) {
+		LOG(("NovaGram update: refusing a non-https hop to %1.").arg(
+			url.toString()));
+		done(nullptr);
+		return;
+	}
+	const auto host = url.host();
+	const auto proxy = Doh::ProxyFor(url);
+	if (proxy.capabilities() & QNetworkProxy::HostNameLookupCapability) {
+		// The proxy resolves for us, so no name is looked up on this machine
+		// at all - which is what the promise is about, and is stricter than
+		// doing it ourselves rather than weaker. Resolving here anyway would
+		// also be actively worse: it would pin the connection to one address
+		// we chose and throw away the routing the proxy would have picked.
+		//
+		// This is not a fall-back to the system resolver. It is the case where
+		// there is nothing for a resolver to do.
+		DEBUG_LOG(("NovaGram update: %1 is resolved by the proxy.").arg(host));
+		auto request = QNetworkRequest(url);
+		request.setAttribute(
+			QNetworkRequest::RedirectPolicyAttribute,
+			QNetworkRequest::NoLessSafeRedirectPolicy);
+		request.setMaximumRedirectsAllowed(5);
+		request.setTransferTimeout(timeout);
+		_manager.setProxy(proxy);
+		const auto reply = _manager.get(request);
+		_reply = reply;
+		QObject::connect(reply, &QNetworkReply::finished, [=] {
+			_reply = nullptr;
+			reply->deleteLater();
+			done(reply);
+		});
+		return;
+	}
+	Doh::Resolve(host, Doh::RecordType::A, [=](Doh::Answer answer) {
+		if (answer.values.empty()) {
+			// No fall-back to the system resolver, by design: a name that
+			// quietly resolved through the system is the leak this replaces.
+			LOG(("NovaGram update: could not resolve %1 over secure DNS.").arg(
+				host));
+			done(nullptr);
 			return;
 		}
-	}
-	// Nothing of Telegram's own to use, so ask the system - and ask it
-	// explicitly rather than letting the application-wide setting decide.
-	//
-	// This is the whole reason the check used to hang. With no Telegram proxy
-	// selected, Sandbox::refreshGlobalProxy() calls setApplicationProxy(
-	// NoProxy), and that overrides the system configuration for every
-	// QNetworkAccessManager in the process. On a machine where the way out is
-	// a proxy auto-config file - the ordinary arrangement where the manifest
-	// host is blocked and Telegram itself reaches the network through a local
-	// proxy - the update request was the one thing that went out directly, into
-	// nothing, and waited there for ever.
-	const auto system = QNetworkProxyFactory::systemProxyForQuery(
-		QNetworkProxyQuery(url));
-	_manager.setProxy(system.isEmpty()
-		? QNetworkProxy(QNetworkProxy::NoProxy)
-		: system.front());
+		auto target = url;
+		target.setHost(answer.values.front());
+		applyProxy(url);
+		auto request = QNetworkRequest(target);
+		request.setPeerVerifyName(host);
+		request.setRawHeader("Host", host.toLatin1());
+		request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+		request.setAttribute(
+			QNetworkRequest::RedirectPolicyAttribute,
+			QNetworkRequest::ManualRedirectPolicy);
+		request.setTransferTimeout(timeout);
+		const auto reply = _manager.get(request);
+		_reply = reply;
+		QObject::connect(reply, &QNetworkReply::finished, [=] {
+			_reply = nullptr;
+			reply->deleteLater();
+			const auto redirect = reply->attribute(
+				QNetworkRequest::RedirectionTargetAttribute).toUrl();
+			if (!redirect.isEmpty()) {
+				getResolved(url.resolved(redirect), timeout, hop + 1, done);
+				return;
+			}
+			done(reply);
+		});
+	});
 }
 
 void Checker::stop() {
@@ -243,20 +323,16 @@ void Checker::checkNow() {
 		return;
 	}
 	set(Phase::Checking);
-	LOG(("NovaGram update: asking %1.").arg(QString::fromLatin1(kManifestUrl)));
+	LOG(("NovaGram update: asking %1.").arg(QString::fromLatin1(kReleasesUrl)));
 
-	const auto url = QUrl(QString::fromLatin1(kManifestUrl));
-	applyProxy(url);
-	auto request = QNetworkRequest(url);
-	Prepare(request, kManifestTimeout);
-	const auto reply = _manager.get(request);
-	_reply = reply;
-	QObject::connect(reply, &QNetworkReply::finished, [=] {
-		_reply = nullptr;
-		reply->deleteLater();
+	const auto url = QUrl(QString::fromLatin1(kReleasesUrl));
+	getResolved(url, kManifestTimeout, 0, [=](QNetworkReply *reply) {
 		if (_cancelling) {
 			// The switch was turned off while the manifest was on its way.
 			_cancelling = false;
+			return;
+		} else if (!reply) {
+			failCheck();
 			return;
 		} else if (reply->error() != QNetworkReply::NoError) {
 			LOG(("NovaGram update: check failed, %1 (%2).").arg(
@@ -269,6 +345,18 @@ void Checker::checkNow() {
 	});
 }
 
+// The half of the tag that belongs to this platform. A tag names both bases -
+// "v7.0.9.2/12.9.2.2" - because one release covers two clients, and each of
+// them compares only its own half.
+[[nodiscard]] QString VersionFromTag(const QString &tag) {
+	auto trimmed = tag;
+	if (trimmed.startsWith('v')) {
+		trimmed = trimmed.mid(1);
+	}
+	const auto slash = trimmed.indexOf('/');
+	return (slash < 0) ? trimmed : trimmed.left(slash);
+}
+
 void Checker::applyManifest(const QByteArray &body) {
 	const auto document = QJsonDocument::fromJson(body);
 	if (!document.isObject()) {
@@ -277,19 +365,34 @@ void Checker::applyManifest(const QByteArray &body) {
 	}
 	const auto object = document.object();
 	auto release = Release{
-		.version = object.value(u"version"_q).toString(),
-		.url = object.value(u"url"_q).toString(),
-		.sha256 = object.value(u"sha256"_q).toString().toLower(),
-		.releaseUrl = object.value(u"release_url"_q).toString(),
+		.version = VersionFromTag(object.value(u"tag_name"_q).toString()),
+		.releaseUrl = object.value(u"html_url"_q).toString(),
 	};
+	// The asset is found by what it is, not by its exact name: a rename in the
+	// packaging script must not silently stop every client from updating.
+	for (const auto value : object.value(u"assets"_q).toArray()) {
+		const auto asset = value.toObject();
+		const auto name = asset.value(u"name"_q).toString();
+		if (!name.endsWith(u".exe"_q, Qt::CaseInsensitive)) {
+			continue;
+		}
+		release.url = asset.value(u"browser_download_url"_q).toString();
+		const auto digest = asset.value(u"digest"_q).toString().toLower();
+		// GitHub gives it as "sha256:<hex>". Anything else is not a digest we
+		// know how to check, and a check that silently passes is worse than
+		// none - so an unknown algorithm leaves the field empty and the
+		// download refuses to install.
+		if (digest.startsWith(u"sha256:"_q)) {
+			release.sha256 = digest.mid(7);
+		}
+		break;
+	}
 	if (release.version.isEmpty()) {
 		failCheck();
 		return;
 	} else if (!release.releaseUrl.isEmpty()
 		&& !release.releaseUrl.startsWith(ProjectUrl())) {
-		// The manifest may only ever point back into the project it belongs
-		// to. It is a file in a repository, and a repository can be edited by
-		// more people than the one who signs the releases.
+		// The answer may only ever point back into the project it belongs to.
 		failCheck();
 		return;
 	} else if (!release.url.isEmpty()
@@ -305,7 +408,7 @@ void Checker::applyManifest(const QByteArray &body) {
 		status.phase = Phase::Found;
 		status.release = release;
 	}
-	LOG(("NovaGram update: manifest says %1, installed %2, %3.").arg(
+	LOG(("NovaGram update: release says %1, installed %2, %3.").arg(
 		release.version,
 		AppVersion(),
 		(status.phase == Phase::Found) ? u"newer"_q : u"not newer"_q));
@@ -343,9 +446,51 @@ void Checker::download() {
 	_status = status;
 
 	const auto url = QUrl(release.url);
-	applyProxy(url);
-	auto request = QNetworkRequest(url);
-	Prepare(request, kDownloadTimeout);
+	const auto proxy = Doh::ProxyFor(url);
+	if (proxy.capabilities() & QNetworkProxy::HostNameLookupCapability) {
+		// The proxy resolves for us, so nothing is looked up here at all and
+		// the request goes out exactly as it did before this module existed -
+		// including Qt following the redirect GitHub sends to the asset host.
+		startDownload(url, QString(), 0);
+		return;
+	}
+	const auto host = url.host();
+	Doh::Resolve(host, Doh::RecordType::A, [=](Doh::Answer answer) {
+		if (answer.values.empty()) {
+			LOG(("NovaGram update: could not resolve %1 over secure DNS.").arg(
+				host));
+			fail();
+			return;
+		}
+		auto target = url;
+		target.setHost(answer.values.front());
+		startDownload(target, host, 0);
+	});
+}
+
+// Issues the request itself. `verifyName` empty means the proxy resolved and
+// Qt may follow redirects on its own; otherwise the address was resolved here
+// and every hop has to be resolved here too - letting Qt follow a Location by
+// name would put the system resolver back into the middle of the one download
+// this fork promises to keep out of it.
+void Checker::startDownload(QUrl target, QString verifyName, int hop) {
+	if (hop > 5) {
+		LOG(("NovaGram update: too many redirects while downloading."));
+		fail();
+		return;
+	}
+	applyProxy(target);
+	auto request = QNetworkRequest(target);
+	if (verifyName.isEmpty()) {
+		Prepare(request, kDownloadTimeout);
+	} else {
+		request.setPeerVerifyName(verifyName);
+		request.setRawHeader("Host", verifyName.toLatin1());
+		request.setAttribute(
+			QNetworkRequest::RedirectPolicyAttribute,
+			QNetworkRequest::ManualRedirectPolicy);
+		request.setTransferTimeout(kDownloadTimeout);
+	}
 	// Ask for the rest of what an earlier attempt managed to fetch. The asset
 	// host answers 206 and sends only the tail; a host that cannot do that
 	// answers 200 with the whole file and the partial is simply replaced, which
@@ -402,6 +547,31 @@ void Checker::download() {
 	QObject::connect(reply, &QNetworkReply::finished, [=] {
 		_reply = nullptr;
 		reply->deleteLater();
+		const auto redirect = reply->attribute(
+			QNetworkRequest::RedirectionTargetAttribute).toUrl();
+		if (!verifyName.isEmpty() && !redirect.isEmpty()) {
+			// Nothing of the body was the file, so the partial is untouched
+			// and the next hop simply asks for the same range again.
+			const auto next = target.resolved(redirect);
+			if (next.scheme() != u"https"_q) {
+				LOG(("NovaGram update: refusing a non-https hop."));
+				fail();
+				return;
+			}
+			const auto nextHost = next.host();
+			Doh::Resolve(nextHost, Doh::RecordType::A, [=](
+					Doh::Answer answer) {
+				if (answer.values.empty()) {
+					LOG(("NovaGram update: could not resolve %1.").arg(nextHost));
+					fail();
+					return;
+				}
+				auto resolved = next;
+				resolved.setHost(answer.values.front());
+				startDownload(resolved, nextHost, hop + 1);
+			});
+			return;
+		}
 		_partial.append(reply->readAll());
 
 		if (_cancelling) {

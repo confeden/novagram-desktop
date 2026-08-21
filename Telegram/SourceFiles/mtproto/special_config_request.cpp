@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/openssl_help.h"
 #include "base/call_delayed.h"
+#include "novagram/nova_doh.h"
 
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonArray>
@@ -198,7 +199,13 @@ SpecialConfigRequest::SpecialConfigRequest(
 , _phone(phone) {
 	Expects((_callback == nullptr) != (_timeDoneCallback == nullptr));
 
-	_manager.setProxy(QNetworkProxy::NoProxy);
+	// No setProxy(NoProxy) here any more. The only attempt left goes through
+	// the fork's resolver, which picks its own way out - and pinning this
+	// manager to "no proxy" was how the clock ended up being the one request
+	// that ignored the proxy the user had chosen and went straight to Google.
+	// The manager below is reached by no live path; it stays because the
+	// upstream branches it belongs to do, and they are what the next merge
+	// will be against.
 
 	std::random_device rd;
 	const auto shuffle = [&](int from, int till) {
@@ -210,29 +217,20 @@ SpecialConfigRequest::SpecialConfigRequest(
 			std::mt19937(rd()));
 	};
 
+	// NovaGram: one attempt, the fork's own resolver. Google and Cloudflare are
+	// gone from here not because they are untrusted but because reaching them
+	// by name meant the system resolver decided where the emergency config
+	// came from - at the one moment the client is already being interfered
+	// with. Firebase and Firestore are gone by the owner's decision of
+	// 2026-08-18: they are Google services reached by name, and the fork uses
+	// them nowhere else.
+	//
+	// The shuffling went with those attempts. There is nothing left to
+	// shuffle: the order inside the resolver is the order the owner set, and
+	// it is deliberate rather than random.
 	_attempts = {};
-	_attempts.push_back({ Type::Google, "dns.google.com" });
-	_attempts.push_back({ Type::Mozilla, "mozilla.cloudflare-dns.com" });
-	_attempts.push_back({ Type::RemoteConfig, "firebaseremoteconfig" });
-	if (!_timeDoneCallback) {
-		_attempts.push_back({ Type::FireStore, "firestore" });
-		for (const auto &domain : DnsDomains()) {
-			_attempts.push_back({ Type::FireStore, domain, "firestore" });
-		}
-	}
-
-	shuffle(0, 2);
-	if (!_timeDoneCallback) {
-		shuffle(_attempts.size() - (int(DnsDomains().size()) + 1), _attempts.size());
-	}
-	if (isTestMode) {
-		_attempts.erase(ranges::remove_if(_attempts, [](
-				const Attempt &attempt) {
-			return (attempt.type != Type::Google)
-				&& (attempt.type != Type::Mozilla);
-		}), _attempts.end());
-	}
-	ranges::reverse(_attempts); // We go from last to first.
+	_attempts.push_back({ Type::NovaDoh, _domainString });
+	(void)shuffle;
 
 	sendNextRequest();
 }
@@ -286,6 +284,49 @@ void SpecialConfigRequest::performRequest(const Attempt &attempt) {
 	auto request = QNetworkRequest();
 	auto payload = QByteArray();
 	switch (type) {
+	case Type::NovaDoh: {
+		const auto weak = base::make_weak(this);
+
+		// The same object serves two callers: one wants the emergency config,
+		// the other only wants to know what time it is. For the second the
+		// answer is not in the records at all, it is the Date header of the
+		// reply - so a cached answer will not do, and the resolver is told to
+		// go and ask.
+		//
+		// The header itself is read and applied inside the resolver: any
+		// endpoint that answers anything has just stated the time over a
+		// checked certificate, and there is no reason left for the client to
+		// ask a separate set of strangers about the clock.
+		const auto forTime = (_timeDoneCallback != nullptr);
+		NovaGram::Doh::Resolve(
+			_domainString,
+			NovaGram::Doh::RecordType::TXT,
+			[=](NovaGram::Doh::Answer answer) {
+				if (!weak) {
+					return;
+				} else if (forTime) {
+					// Called whether or not the time was learned. Holding it
+					// back on failure would leave the loader alive for the
+					// rest of the session, and every later request for the
+					// time would find it there and quietly do nothing.
+					_timeDoneCallback();
+					return;
+				} else if (answer.values.empty()) {
+					LOG(("Config Error: NovaGram DoH gave no TXT for %1."
+						).arg(_domainString));
+					return;
+				}
+				auto entries = std::vector<DnsEntry>();
+				for (auto &value : answer.values) {
+					entries.push_back({ .data = std::move(value) });
+				}
+				handleResponse(ConcatenateDnsTxtFields(entries));
+			},
+			(forTime
+				? NovaGram::Doh::Cache::Skip
+				: NovaGram::Doh::Cache::Use));
+		return;
+	} break;
 	case Type::Mozilla: {
 		url.setHost(attempt.data);
 		url.setPath(u"/dns-query"_q);

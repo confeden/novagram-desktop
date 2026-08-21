@@ -35,6 +35,11 @@ public:
 
 private:
 	enum class Type {
+		// NovaGram: the fork's own resolver over its fixed list of endpoints.
+		// It replaces the by-name requests to Google and Cloudflare below,
+		// which reached those hosts through the system resolver and with the
+		// proxy explicitly disabled.
+		NovaDoh,
 		Mozilla,
 		Google,
 		RemoteConfig,

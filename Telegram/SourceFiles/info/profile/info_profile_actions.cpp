@@ -1850,6 +1850,34 @@ Section DetailsFiller::makeInfo() {
 			SetupAboutPeerIdDrag(about.text, _peer);
 		}
 	}
+	// Deliberately outside both branches above: one insertion covers a person,
+	// a bot, a group and a channel, which is the whole point - an identifier
+	// that is shown for some kinds of peer and not others is worse than none.
+	// A forum topic is skipped: it has no id of its own and would show the
+	// channel's, which would be a lie.
+	if (!_topic) {
+		const auto id = QString::number(_peer->id.value & PeerId::kChatTypeMask);
+		auto value = rpl::single([&] {
+			using namespace Ui::Text;
+			// Not FormatCountDecimal: it groups digits ("8 202 775 533") and
+			// then what is on screen no longer matches what is copied.
+			auto result = TextWithEntities{ u"ID: "_q + id };
+			result.append(IconEmoji(&st::novaIdCopyIconEmoji));
+			return Link(result, u"internal:copy:"_q + id);
+		}());
+		const auto line = addInfoOneLine(
+			QString(),
+			std::move(value),
+			tr::lng_context_copy_text(tr::now),
+			st::novaIdPadding);
+		line.text->setLinksTrusted();
+		// The label under the value is what the rest of the profile uses for
+		// "Username", "Bio" and so on. Here the value already says ID, so the
+		// second line has nothing to say - and an empty label still costs the
+		// skip above it.
+		line.subtext->hide();
+	}
+
 	raw->toggleOn(tracker.atLeastOneShownValue());
 	raw->finishAnimating();
 

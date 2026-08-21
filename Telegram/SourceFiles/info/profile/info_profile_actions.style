@@ -67,3 +67,15 @@ infoHoursOuter: RoundButton(defaultActiveButton) {
 infoHoursOuterMargin: margins(8px, 4px, 8px, 4px);
 infoHoursDaySkip: 6px;
 infoHoursArrowSize: 4px;
+
+// The copy glyph shown right after the peer id. Deliberately the 10x10 inline
+// asset and the dimmest grey in the palette: it is a hint that the line is
+// copyable, not a button, and it must not compete with the number itself.
+novaIdCopyIconEmoji: IconEmoji {
+	icon: icon {{ "inline_button_copy", msgInDateFg }};
+	padding: margins(3px, 2px, 0px, 0px);
+}
+// Tighter than infoProfileLabeledPadding (9px/7px): this row carries one line
+// and no label under it, so the stock vertical padding left it looking like a
+// gap with a number in it.
+novaIdPadding: margins(23px, 3px, 20px, 2px);

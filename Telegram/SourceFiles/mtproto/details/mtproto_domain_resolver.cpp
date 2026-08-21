@@ -10,19 +10,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "base/invoke_queued.h"
 #include "base/call_delayed.h"
+#include "base/weak_qptr.h"
+#include "novagram/nova_doh.h"
 
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
-#include <range/v3/algorithm/shuffle.hpp>
-#include <range/v3/algorithm/reverse.hpp>
-#include <range/v3/algorithm/remove.hpp>
-#include <random>
 
 namespace MTP::details {
 namespace {
 
-constexpr auto kSendNextTimeout = crl::time(800);
 constexpr auto kMinTimeToLive = 10 * crl::time(1000);
 constexpr auto kMaxTimeToLive = 300 * crl::time(1000);
 
@@ -183,7 +180,6 @@ DomainResolver::DomainResolver(Fn<void(
 	const QStringList &ips,
 	crl::time expireAt)> callback)
 : _callback(std::move(callback)) {
-	_manager.setProxy(QNetworkProxy::NoProxy);
 }
 
 void DomainResolver::resolve(const QString &domain) {
@@ -192,9 +188,7 @@ void DomainResolver::resolve(const QString &domain) {
 }
 
 void DomainResolver::resolve(const AttemptKey &key) {
-	if (_attempts.find(key) != end(_attempts)) {
-		return;
-	} else if (_requests.find(key) != end(_requests)) {
+	if (_requested.contains(key)) {
 		return;
 	}
 	const auto i = _cache.find(key);
@@ -203,38 +197,48 @@ void DomainResolver::resolve(const AttemptKey &key) {
 		checkExpireAndPushResult(key.domain);
 		return;
 	}
+	_requested.emplace(key);
 
-	auto attempts = std::vector<Attempt>();
-	auto domains = DnsDomains();
-	std::random_device rd;
-	ranges::shuffle(domains, std::mt19937(rd()));
-	const auto takeDomain = [&] {
-		const auto result = domains.back();
-		domains.pop_back();
-		return result;
-	};
-	const auto shuffle = [&](int from, int till) {
-		Expects(till > from);
+	const auto weak = base::make_weak(this);
+	NovaGram::Doh::Resolve(
+		key.domain,
+		(key.ipv6
+			? NovaGram::Doh::RecordType::AAAA
+			: NovaGram::Doh::RecordType::A),
+		[=](NovaGram::Doh::Answer answer) {
+			if (!weak) {
+				return;
+			}
+			applyAnswer(key, answer.values, answer.ttl);
+		});
+}
 
-		ranges::shuffle(
-			begin(attempts) + from,
-			begin(attempts) + till,
-			std::mt19937(rd()));
-	};
-
-	attempts.push_back({ Type::Google, "dns.google.com" });
-	attempts.push_back({ Type::Google, takeDomain(), "dns" });
-	attempts.push_back({ Type::Mozilla, "mozilla.cloudflare-dns.com" });
-	while (!domains.empty()) {
-		attempts.push_back({ Type::Google, takeDomain(), "dns" });
+void DomainResolver::applyAnswer(
+		const AttemptKey &key,
+		const std::vector<QString> &ips,
+		crl::time ttl) {
+	_requested.erase(key);
+	if (ips.empty()) {
+		// Nothing is cached, so the next attempt asks again rather than
+		// remembering a failure - and nothing is pushed to the callback,
+		// because the caller must not read "the resolver said no" as
+		// permission to reach the name some other way.
+		DEBUG_LOG(("NovaGram DoH: no %1 record for %2.").arg(
+			key.ipv6 ? u"AAAA"_q : u"A"_q,
+			key.domain));
+		return;
 	}
 
-	shuffle(0, 2);
+	auto entry = CacheEntry();
+	for (const auto &ip : ips) {
+		entry.ips.push_back(ip);
+	}
+	_lastTimestamp = crl::now();
+	entry.expireAt = _lastTimestamp
+		+ std::clamp(ttl, kMinTimeToLive, kMaxTimeToLive);
+	_cache[key] = std::move(entry);
 
-	ranges::reverse(attempts); // We go from last to first.
-
-	_attempts.emplace(key, Attempts{ std::move(attempts) });
-	sendNextRequest(key);
+	checkExpireAndPushResult(key.domain);
 }
 
 void DomainResolver::checkExpireAndPushResult(const QString &domain) {
@@ -251,117 +255,6 @@ void DomainResolver::checkExpireAndPushResult(const QString &domain) {
 	InvokeQueued(this, [=] {
 		_callback(domain, result.ips, result.expireAt);
 	});
-}
-
-void DomainResolver::sendNextRequest(const AttemptKey &key) {
-	auto i = _attempts.find(key);
-	if (i == end(_attempts)) {
-		return;
-	}
-	auto &attempts = i->second;
-	auto &list = attempts.list;
-	const auto attempt = list.back();
-	list.pop_back();
-
-	if (!list.empty()) {
-		base::call_delayed(kSendNextTimeout, &attempts.guard, [=] {
-			sendNextRequest(key);
-		});
-	}
-	performRequest(key, attempt);
-}
-
-void DomainResolver::performRequest(
-		const AttemptKey &key,
-		const Attempt &attempt) {
-	auto url = QUrl();
-	url.setScheme("https");
-	auto request = QNetworkRequest();
-	switch (attempt.type) {
-	case Type::Mozilla: {
-		url.setHost(attempt.data);
-		url.setPath("/dns-query");
-		url.setQuery(QStringLiteral("name=%1&type=%2&random_padding=%3"
-		).arg(key.domain
-		).arg(key.ipv6 ? 28 : 1
-		).arg(GenerateDnsRandomPadding()));
-		request.setRawHeader("accept", "application/dns-json");
-	} break;
-	case Type::Google: {
-		url.setHost(attempt.data);
-		url.setPath("/resolve");
-		url.setQuery(QStringLiteral("name=%1&type=%2&random_padding=%3"
-		).arg(key.domain
-		).arg(key.ipv6 ? 28 : 1
-		).arg(GenerateDnsRandomPadding()));
-		if (!attempt.host.isEmpty()) {
-			const auto host = attempt.host + ".google.com";
-			request.setRawHeader("Host", host.toLatin1());
-		}
-	} break;
-	default: Unexpected("Type in DomainResolver::performRequest.");
-	}
-	request.setUrl(url);
-	request.setRawHeader("User-Agent", DnsUserAgent());
-	const auto i = _requests.emplace(
-		key,
-		std::vector<ServiceWebRequest>()).first;
-	const auto reply = i->second.emplace_back(
-		_manager.get(request)
-	).reply;
-	connect(reply, &QNetworkReply::finished, this, [=] {
-		requestFinished(key, reply);
-	});
-}
-
-void DomainResolver::requestFinished(
-		const AttemptKey &key,
-		not_null<QNetworkReply*> reply) {
-	const auto result = finalizeRequest(key, reply);
-	const auto response = ParseDnsResponse(result);
-	if (response.empty()) {
-		return;
-	}
-	_requests.erase(key);
-	_attempts.erase(key);
-
-	auto entry = CacheEntry();
-	auto ttl = kMaxTimeToLive;
-	for (const auto &item : response) {
-		entry.ips.push_back(item.data);
-		ttl = std::min(
-			ttl,
-			std::max(item.TTL * crl::time(1000), kMinTimeToLive));
-	}
-	_lastTimestamp = crl::now();
-	entry.expireAt = _lastTimestamp + ttl;
-	_cache[key] = std::move(entry);
-
-	checkExpireAndPushResult(key.domain);
-}
-
-QByteArray DomainResolver::finalizeRequest(
-		const AttemptKey &key,
-		not_null<QNetworkReply*> reply) {
-	if (reply->error() != QNetworkReply::NoError) {
-		DEBUG_LOG(("Resolve Error: Failed to get response, error: %2 (%3)"
-			).arg(reply->errorString()
-			).arg(reply->error()));
-	}
-	const auto result = reply->readAll();
-	const auto i = _requests.find(key);
-	if (i != end(_requests)) {
-		auto &requests = i->second;
-		const auto from = ranges::remove(
-			requests,
-			reply,
-			[](const ServiceWebRequest &request) { return request.reply; });
-		requests.erase(from, end(requests));
-		if (requests.empty()) {
-			_requests.erase(i);
-		}
-	}
-	return result;
 }
 
 } // namespace MTP::details

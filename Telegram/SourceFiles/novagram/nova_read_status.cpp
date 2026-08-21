@@ -760,6 +760,45 @@ void RevealReadStatus(not_null<PeerData*> peer) {
 	Get(&peer->session()).reveal(peer);
 }
 
+namespace {
+
+// Not a bool: Erase evidence walks a history inside one scope, and a nested
+// one must not open the gate when it ends.
+int SuppressReactionReveal/* = 0*/;
+
+} // namespace
+
+ReactionRevealSuppressor::ReactionRevealSuppressor() {
+	++SuppressReactionReveal;
+}
+
+ReactionRevealSuppressor::~ReactionRevealSuppressor() {
+	--SuppressReactionReveal;
+}
+
+void NoteReactionSent(not_null<HistoryItem*> item) {
+	if (SuppressReactionReveal > 0) {
+		return;
+	} else if (item->out() || item->isService()) {
+		// Reacting to what the user wrote themselves says nothing about the
+		// other side's messages having been read, so it changes nothing.
+		return;
+	} else if (Decoy::Active()) {
+		// The decoy has to behave like a plain client that never heard of the
+		// feature, so it makes no rules of its own.
+		return;
+	}
+	const auto peer = item->history()->peer;
+	if (NeverHiddenPeer(peer)) {
+		return;
+	}
+	// Called for taking a reaction back as well as for putting one on, and
+	// deliberately so: taking one back means it had been there, and the other
+	// side has already been told. Nothing is lost either way - the dialog is
+	// already open by then and reveal() returns at once.
+	Get(&peer->session()).reveal(peer);
+}
+
 rpl::producer<> ReadStatusUpdates(not_null<Main::Session*> session) {
 	return Get(session).updates();
 }

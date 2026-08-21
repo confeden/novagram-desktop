@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_pin.h"
+#include "novagram/nova_read_status.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
@@ -130,6 +131,10 @@ void Collector::finish() {
 	// ask the server where this account has reacted, so nothing but the local
 	// history can be walked here.
 	auto reactions = 0;
+	// Removing a reaction goes out the same door as putting one on, and that
+	// door lifts the hiding of the read status. Erasing traces must not tell
+	// the other side that their messages were read - see the class comment.
+	const auto suppress = ReactionRevealSuppressor();
 	for (const auto &block : _history->blocks) {
 		for (const auto &view : block->messages) {
 			const auto item = view->data();

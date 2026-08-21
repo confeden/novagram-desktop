@@ -15,6 +15,13 @@ namespace {
 
 constexpr auto kOneConnectionTimeout = 4000;
 
+// NovaGram: how long the connection watchdog is asked to wait while the proxy
+// domain is being resolved. Without it the watchdog restarts the whole cycle
+// after one connection timeout - before the resolver has had time to walk even
+// two of its endpoints - and the client spends its first seconds tearing down
+// an attempt that was about to succeed.
+constexpr auto kResolveWaitTimeout = 10000;
+
 } // namespace
 
 ResolvingConnection::ResolvingConnection(
@@ -185,7 +192,8 @@ crl::time ResolvingConnection::pingTime() const {
 }
 
 crl::time ResolvingConnection::fullConnectTimeout() const {
-	return kOneConnectionTimeout * qMax(int(_proxy.resolvedIPs.size()), 1);
+	return kOneConnectionTimeout * qMax(int(_proxy.resolvedIPs.size()), 1)
+		+ (_proxy.resolvedIPs.empty() ? kResolveWaitTimeout : 0);
 }
 
 void ResolvingConnection::sendData(mtpBuffer &&buffer) {
@@ -220,6 +228,24 @@ void ResolvingConnection::connectToServer(
 	_protocolSecret = protocolSecret;
 	_protocolDcId = protocolDcId;
 	_protocolForFiles = protocolForFiles;
+
+	// NovaGram: the gate. The child this object was built with carries the
+	// proxy exactly as the user typed it, host name and all, and handing it to
+	// Qt is handing that name to the system resolver - QTcpSocket looks up a
+	// proxy given by name itself, before any of this fork's own code is
+	// reached. So nothing is connected until an address is known: the
+	// parameters are kept, and domainResolved() builds a child bound to a
+	// resolved address and connects that one instead.
+	//
+	// Waiting is the point. Falling through to the by-name child "just for the
+	// first attempt" is exactly the leak the promise is about, and it is the
+	// attempt that matters - after it the name is in the system cache anyway.
+	if (_proxy.resolvedIPs.empty()) {
+		CONNECTION_LOG_INFO("Resolving holds the first connect until "
+			+ _proxy.host
+			+ " is resolved.");
+		return;
+	}
 	_child->connectToServer(
 		address,
 		port,

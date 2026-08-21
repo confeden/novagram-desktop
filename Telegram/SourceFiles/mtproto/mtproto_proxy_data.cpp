@@ -166,7 +166,17 @@ bool ProxyData::tryCustomResolve() const {
 	static const auto RegExp = QRegularExpression(
 		QStringLiteral("^\\d+\\.\\d+\\.\\d+\\.\\d+$")
 	);
-	return (type == Type::Socks5 || type == Type::Mtproto)
+	// NovaGram: HTTP proxies are here too, by the owner's decision of
+	// 2026-08-16. Upstream left them out because Qt can reach an HTTP proxy by
+	// name on its own - which is precisely the objection: it reaches it by
+	// asking the system resolver, and this fork promises that it does not.
+	//
+	// A proxy given as an address still resolves nothing, and that stays the
+	// way out where the endpoints are unreachable or the name only exists
+	// inside a company network.
+	return (type == Type::Socks5
+			|| type == Type::Mtproto
+			|| type == Type::Http)
 		&& !qthelp::is_ipv6(host)
 		&& !RegExp.match(host).hasMatch();
 }

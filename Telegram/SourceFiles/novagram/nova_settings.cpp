@@ -13,6 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_branding.h"
+#include "novagram/nova_calls.h"
+#include "novagram/nova_doh.h"
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_filenames.h"
 #include "novagram/nova_marquee_button.h"
@@ -30,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
@@ -314,12 +317,12 @@ void FillAutoDelete(
 		? u"Когда вам пишет незнакомец, а вы ещё не отвечали, галочки "
 			"прочтения ему не отправляются. Правило заводится по первому "
 			"такому сообщению; группы, каналы, боты и «Избранное» не "
-			"затрагиваются. Любой ваш ответ снимает скрытие, а для Telegram "
+			"затрагиваются. Ваш ответ или реакция снимают скрытие, а для Telegram "
 			"такая переписка остаётся непрочитанной."_q
 		: u"When a stranger writes to you and you have not answered yet, the "
 			"read marks are never sent to them. The rule is made on the first "
 			"such message; groups, channels, bots and Saved Messages are left "
-			"alone. Any answer of yours lifts it, and for Telegram such a "
+			"alone. An answer or a reaction of yours lifts it, and for Telegram "
 			"conversation stays unread."_q;
 }
 
@@ -337,6 +340,189 @@ void FillReadStatus(
 
 	Ui::AddSkip(container);
 	Ui::AddDividerText(container, rpl::single(ReadStatusAbout()));
+}
+
+[[nodiscard]] QString DohTitle() {
+	return UseRussianTexts()
+		? u"Защищённый DNS"_q
+		: u"Encrypted DNS"_q;
+}
+
+[[nodiscard]] QString DohAbout() {
+	return UseRussianTexts()
+		? u"Имена, которые NovaGram разрешает сам, идут только по этому списку. "
+			"Ни система, ни сеть, ни файл hosts на него не влияют и не "
+			"подставляются взамен. Свой сервер разрешается через включённые "
+			"встроенные."_q
+		: u"Names NovaGram resolves itself go through this list and nothing "
+			"else: neither the system, nor the network, nor the hosts file "
+			"affects it or stands in for it. A server of your own is resolved "
+			"through the built-in ones that are on."_q;
+}
+
+void AddCustomDohBox(
+		not_null<Ui::GenericBox*> box,
+		Fn<void(Doh::Endpoint)> done) {
+	const auto russian = UseRussianTexts();
+	box->setTitle(rpl::single(russian
+		? u"Свой сервер"_q
+		: u"Your own server"_q));
+	const auto host = box->addRow(object_ptr<Ui::InputField>(
+		box,
+		st::defaultInputField,
+		rpl::single(u"dns.example.org"_q)));
+	const auto addresses = box->addRow(object_ptr<Ui::InputField>(
+		box,
+		st::defaultInputField,
+		rpl::single(russian
+			? u"IP-адреса через запятую, можно не указывать"_q
+			: u"IP addresses, comma separated, optional"_q)));
+	box->setFocusCallback([=] { host->setFocusFast(); });
+	box->addButton(rpl::single(russian ? u"Добавить"_q : u"Add"_q), [=] {
+		auto endpoint = Doh::Endpoint();
+		// Only a host is asked for: the path is the one every RFC 8484
+		// endpoint uses, and a field for it would be a way to get it wrong.
+		endpoint.host = host->getLastText().trimmed().toLower();
+		endpoint.path = u"/dns-query"_q;
+		endpoint.builtin = false;
+		endpoint.enabled = true;
+		if (endpoint.host.isEmpty() || endpoint.host.contains('/')) {
+			host->showError();
+			return;
+		}
+		for (const auto &part : addresses->getLastText().split(',')) {
+			const auto trimmed = part.trimmed();
+			if (!trimmed.isEmpty()) {
+				endpoint.addresses.push_back(trimmed);
+			}
+		}
+		done(std::move(endpoint));
+		box->closeBox();
+	});
+	box->addButton(
+		rpl::single(russian ? u"Отмена"_q : u"Cancel"_q),
+		[=] { box->closeBox(); });
+}
+
+void DohBox(not_null<Ui::GenericBox*> box) {
+	const auto russian = UseRussianTexts();
+	box->setTitle(rpl::single(DohTitle()));
+
+	const auto state = box->lifetime().make_state<std::vector<Doh::Endpoint>>(
+		Doh::Endpoints());
+	const auto rebuild = box->lifetime().make_state<rpl::event_stream<>>();
+	const auto container = box->verticalLayout();
+	const auto wrap = container->add(
+		object_ptr<Ui::VerticalLayout>(container));
+
+	const auto fill = [=] {
+		while (wrap->count()) {
+			delete wrap->widgetAt(0);
+		}
+		for (auto i = 0; i != int(state->size()); ++i) {
+			const auto &endpoint = (*state)[i];
+			const auto button = wrap->add(
+				object_ptr<Ui::SettingsButton>(
+					wrap,
+					rpl::single(endpoint.host),
+					st::settingsButtonNoIcon));
+			button->toggleOn(rpl::single(endpoint.enabled));
+			button->toggledChanges(
+			) | rpl::on_next([=](bool toggled) {
+				(*state)[i].enabled = toggled;
+			}, button->lifetime());
+			if (!endpoint.builtin) {
+				// A server of one's own is the only kind that can be taken
+				// away: the built-in four are the floor this stands on.
+				button->setClickedCallback([=] {
+					state->erase(begin(*state) + i);
+					rebuild->fire({});
+				});
+			}
+		}
+		wrap->resizeToWidth(box->width());
+	};
+	rebuild->events() | rpl::on_next(fill, box->lifetime());
+	fill();
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(DohAbout()));
+	Ui::AddSkip(container);
+
+	const auto add = container->add(
+		object_ptr<Ui::SettingsButton>(
+			container,
+			rpl::single(russian ? u"Добавить свой сервер"_q : u"Add your own"_q),
+			st::settingsButtonNoIcon));
+	add->setClickedCallback([=] {
+		box->uiShow()->showBox(Box(AddCustomDohBox, [=](Doh::Endpoint value) {
+			state->push_back(std::move(value));
+			rebuild->fire({});
+		}));
+	});
+
+	box->addButton(rpl::single(russian ? u"Сохранить"_q : u"Save"_q), [=] {
+		const auto error = Doh::ValidateEndpoints(*state);
+		if (!error.isEmpty()) {
+			box->uiShow()->showToast(error);
+			return;
+		}
+		Doh::SetEndpoints(*state);
+		box->closeBox();
+	});
+	box->addButton(
+		rpl::single(russian ? u"Отмена"_q : u"Cancel"_q),
+		[=] { box->closeBox(); });
+}
+
+void FillDoh(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller) {
+	Ui::AddSkip(container);
+	const auto refreshed = container->lifetime().make_state<
+		rpl::event_stream<>
+	>();
+	auto updates = rpl::single(rpl::empty) | rpl::then(refreshed->events());
+	const auto row = AddButtonWithLabel(
+		container,
+		rpl::single(DohTitle()),
+		rpl::duplicate(updates) | rpl::map([] {
+			auto on = 0;
+			for (const auto &endpoint : Doh::Endpoints()) {
+				if (endpoint.enabled) {
+					++on;
+				}
+			}
+			return QString::number(on);
+		}),
+		st::settingsButtonNoIcon);
+	row->setClickedCallback([=] {
+		controller->show(Box([=](not_null<Ui::GenericBox*> box) {
+			DohBox(box);
+			box->boxClosing() | rpl::on_next([=] {
+				refreshed->fire({});
+			}, box->lifetime());
+		}));
+	});
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(DohAbout()));
+}
+
+void FillCalls(not_null<Ui::VerticalLayout*> container) {
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(UseRussianTexts() ? u"Звонки"_q : u"Calls"_q));
+
+	AddToggle(
+		container,
+		Calls::RelayOnlyTitle(),
+		Calls::RelayOnly(),
+		[=](bool toggled) { Calls::SetRelayOnly(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(Calls::RelayOnlyAbout()));
 }
 
 [[nodiscard]] QString FileNamesAbout() {
@@ -693,6 +879,8 @@ void NovaGramSection::setupContent() {
 		FillProtection(container, controller);
 		FillAutoDelete(container, controller);
 		FillReadStatus(container, controller);
+		FillCalls(container);
+		FillDoh(container, controller);
 		FillFiles(container);
 		FillNotifications(container, controller);
 		FillSending(container);

@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/audio/media_audio_track.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_dh_utils.h"
+#include "novagram/nova_calls.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/rate_call_box.h"
 #include "webrtc/webrtc_create_adm.h"
@@ -76,11 +77,19 @@ void AppendEndpoint(
 		if (data.vpeer_tag().v.length() != 16 || data.is_tcp()) {
 			return;
 		}
+		// Same reason as in AppendServer: a name reaches the system resolver.
+		const auto ipv4 = QString::fromLatin1(data.vip().v);
+		const auto ipv6 = QString::fromLatin1(data.vipv6().v);
+		const auto goodv4 = NovaGram::Calls::AcceptableCallAddress(ipv4);
+		const auto goodv6 = NovaGram::Calls::AcceptableCallAddress(ipv6);
+		if (!goodv4 && !goodv6) {
+			return;
+		}
 		tgcalls::Endpoint endpoint = {
 			.endpointId = (int64_t)data.vid().v,
 			.host = tgcalls::EndpointHost{
-				.ipv4 = data.vip().v.toStdString(),
-				.ipv6 = data.vipv6().v.toStdString() },
+				.ipv4 = goodv4 ? ipv4.toStdString() : std::string(),
+				.ipv6 = goodv6 ? ipv6.toStdString() : std::string() },
 			.port = (uint16_t)data.vport().v,
 			.type = tgcalls::EndpointType::UdpRelay,
 		};
@@ -119,6 +128,15 @@ void AppendServer(
 		Assert(i != end(ids));
 		const auto id = uint8_t((i - begin(ids)) + 1);
 		const auto pushTurn = [&](const QString &host) {
+			if (!NovaGram::Calls::AcceptableCallAddress(host)) {
+				// A name here would be handed to the system resolver by
+				// tgcalls, in the clear. See nova_calls.h.
+				if (!host.isEmpty()) {
+					LOG(("Call Info: refused reflector address '%1', "
+						"not a numeric one.").arg(host));
+				}
+				return;
+			}
 			list.push_back(tgcalls::RtcServer{
 				.id = id,
 				.host = host.toStdString(),
@@ -137,7 +155,11 @@ void AppendServer(
 		const auto port = uint16_t(data.vport().v);
 		if (data.is_stun()) {
 			const auto pushStun = [&](const QString &host) {
-				if (host.isEmpty()) {
+				if (!NovaGram::Calls::AcceptableCallAddress(host)) {
+					if (!host.isEmpty()) {
+						LOG(("Call Info: refused stun address '%1', "
+							"not a numeric one.").arg(host));
+					}
 					return;
 				}
 				list.push_back(tgcalls::RtcServer{
@@ -153,6 +175,13 @@ void AppendServer(
 		const auto password = qs(data.vpassword());
 		if (data.is_turn() && !username.isEmpty() && !password.isEmpty()) {
 			const auto pushTurn = [&](const QString &host) {
+				if (!NovaGram::Calls::AcceptableCallAddress(host)) {
+					if (!host.isEmpty()) {
+						LOG(("Call Info: refused turn address '%1', "
+							"not a numeric one.").arg(host));
+					}
+					return;
+				}
 				list.push_back(tgcalls::RtcServer{
 					.host = host.toStdString(),
 					.port = port,
@@ -189,6 +218,16 @@ uint64 ComputeFingerprint(bytes::const_span authKey) {
 	) | ranges::views::transform([=](const std::string &string) {
 		return MTP_string(string);
 	}) | ranges::to<QVector<MTPstring>>;
+}
+
+// What this client says it is able to do. The stock code announces both ways
+// unconditionally; while calls are kept to relays there is no reason to tell
+// the server about a capability we will refuse to use, and the announcement is
+// one of the two things the server weighs when it decides p2p_allowed.
+[[nodiscard]] MTPDphoneCallProtocol::Flags CallProtocolFlags() {
+	using Flag = MTPDphoneCallProtocol::Flag;
+	return Flag::f_udp_reflector
+		| (NovaGram::Calls::RelayOnly() ? Flag(0) : Flag::f_udp_p2p);
 }
 
 [[nodiscard]] QVector<MTPstring> CollectVersionsForApi() {
@@ -353,8 +392,7 @@ void Call::startOutgoing() {
 		MTP_int(base::RandomValue<int32>()),
 		MTP_bytes(_gaHash),
 		MTP_phoneCallProtocol(
-			MTP_flags(MTPDphoneCallProtocol::Flag::f_udp_p2p
-				| MTPDphoneCallProtocol::Flag::f_udp_reflector),
+			MTP_flags(CallProtocolFlags()),
 			MTP_int(kMinLayer),
 			MTP_int(tgcalls::Meta::MaxLayer()),
 			MTP_vector(CollectVersionsForApi()))
@@ -487,8 +525,7 @@ void Call::actuallyAnswer() {
 		MTP_inputPhoneCall(MTP_long(_id), MTP_long(_accessHash)),
 		MTP_bytes(_gb),
 		MTP_phoneCallProtocol(
-			MTP_flags(MTPDphoneCallProtocol::Flag::f_udp_p2p
-				| MTPDphoneCallProtocol::Flag::f_udp_reflector),
+			MTP_flags(CallProtocolFlags()),
 			MTP_int(kMinLayer),
 			MTP_int(tgcalls::Meta::MaxLayer()),
 			MTP_vector(CollectVersionsForApi()))
@@ -971,8 +1008,7 @@ void Call::confirmAcceptedCall(const MTPDphoneCallAccepted &call) {
 		MTP_bytes(_ga),
 		MTP_long(_keyFingerprint),
 		MTP_phoneCallProtocol(
-			MTP_flags(MTPDphoneCallProtocol::Flag::f_udp_p2p
-				| MTPDphoneCallProtocol::Flag::f_udp_reflector),
+			MTP_flags(CallProtocolFlags()),
 			MTP_int(kMinLayer),
 			MTP_int(tgcalls::Meta::MaxLayer()),
 			MTP_vector(CollectVersionsForApi()))
@@ -1045,8 +1081,15 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 		return data.vlibrary_versions().v;
 	}).value(0, MTP_bytes(kDefaultVersion)).v;
 
-	LOG(("Call Info: Creating instance with version '%1', allowP2P: %2").arg(
+	// The effective value, not the server's permission: this line is the one
+	// place a run can be checked against the promise, and printing what the
+	// server allowed would say nothing about what this client did with it.
+	const auto allowP2P = call.is_p2p_allowed()
+		&& !NovaGram::Calls::RelayOnly();
+	LOG(("Call Info: Creating instance with version '%1', allowP2P: %2"
+		" (server said %3)").arg(
 		QString::fromUtf8(version),
+		Logs::b(allowP2P),
 		Logs::b(call.is_p2p_allowed())));
 
 	const auto versionString = version.toStdString();
@@ -1087,7 +1130,10 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 				= serverConfig.callConnectTimeoutMs / 1000.,
 			.receiveTimeout = serverConfig.callPacketTimeoutMs / 1000.,
 			.dataSaving = tgcalls::DataSaving::Never,
-			.enableP2P = call.is_p2p_allowed(),
+			// The server's answer is a permission, not an instruction. See
+			// nova_calls.h: this is the only place where the guarantee can be
+			// made, because everything below it only sees the flag.
+			.enableP2P = allowP2P,
 			.enableAEC = false,
 			.enableNS = true,
 			.enableAGC = true,
@@ -1163,6 +1209,17 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 	}
 	for (const auto &connection : call.vconnections().v) {
 		AppendServer(descriptor.rtcServers, connection, ids);
+	}
+	// A call that never connects looks exactly like a network problem, so the
+	// one thing that must not be silent is this fork having thrown addresses
+	// away. Zero servers out of a non-empty list is our doing, not the line's.
+	LOG(("Call Info: %1 connections from server, %2 endpoints, %3 rtc servers."
+		).arg(call.vconnections().v.size()
+		).arg(descriptor.endpoints.size()
+		).arg(descriptor.rtcServers.size()));
+	if (!call.vconnections().v.empty() && descriptor.rtcServers.empty()) {
+		LOG(("Call Error: NovaGram refused every address the server sent, "
+			"so there is nothing to connect to."));
 	}
 
 	{
@@ -1240,6 +1297,17 @@ void Call::handleControllerStateChange(tgcalls::State state) {
 	case tgcalls::State::Established: {
 		DEBUG_LOG(("Call Info: State changed to Established."));
 		setState(State::Established);
+	} break;
+
+	case tgcalls::State::Reconnecting: {
+		// Upstream has no case for this and lets it fall into the default
+		// below, which calls it an error. It is not one: tgcalls reports it
+		// while it is still gathering and probing, and again on every network
+		// change during a healthy call. There is no Calls::State for it, so
+		// nothing is set here on purpose - the point is only that a normal
+		// reconnect stops being logged as "Call Error", because this log is
+		// what a call is diagnosed from.
+		DEBUG_LOG(("Call Info: State changed to Reconnecting."));
 	} break;
 
 	case tgcalls::State::Failed: {

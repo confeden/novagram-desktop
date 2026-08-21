@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "core/update_checker.h"
 #include "core/application.h"
+#include "novagram/nova_pin.h" // NovaGram::UseRussianTexts.
 #include "core/click_handler_types.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 #include "boxes/background_preview_box.h"
@@ -892,7 +893,9 @@ bool CopyPeerId(
 	TextUtilities::SetClipboardText({ match->captured(1) });
 	if (controller) {
 		controller->showToast({
-			.text = { u"ID copied to clipboard."_q },
+			.text = { NovaGram::UseRussianTexts()
+				? u"ID скопирован"_q
+				: u"ID copied to clipboard."_q },
 			.iconLottie = u"toast/copy"_q,
 			.iconLottieSize = st::toastLottieIconSize,
 		});

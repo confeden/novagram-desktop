@@ -559,6 +559,13 @@ void Instance::Private::badConfigurationError() {
 }
 
 void Instance::Private::syncHttpUnixtime() {
+	// NovaGram: this used to be the one path in the client that asked the
+	// network something with the proxy explicitly switched off - the clock was
+	// fetched from Google and Cloudflare by name and direct, whatever the user
+	// had chosen. It now goes through the fork's resolver, which means the
+	// same four endpoints, the same proxy policy and the same certificate
+	// check as everything else; so unlike ConfigLoader, which gives up on its
+	// special loader whenever a proxy is on, there is nothing here to give up.
 	if (base::unixtime::http_valid()
 		|| _httpUnixtimeLoader
 		|| NovaGram::Decoy::Active()) {

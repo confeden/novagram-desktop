@@ -71,6 +71,35 @@ void NoteHeldRead(not_null<History*> history, MsgId tillId);
 // an answer tells the other side that the messages were read anyway.
 void RevealReadStatus(not_null<PeerData*> peer);
 
+// A reaction the user puts on a message somebody else wrote is delivered to
+// that person and named as theirs, so it says the message was read exactly as
+// plainly as an answer does - and withholding the receipt afterwards protects
+// nothing. Does the same as a sent message: stops hiding in that dialog for
+// good. A reaction on the user's own message is left alone; it tells the other
+// side nothing about their messages having been read.
+void NoteReactionSent(not_null<HistoryItem*> item);
+
+// While one of these is alive, reactions leaving this client do not lift the
+// hiding.
+//
+// It exists for Erase evidence, which strips the user's own reactions from a
+// chat. Those removals travel the same single path as a reaction the user just
+// put on, so without this the act of erasing traces would send a read receipt
+// to the very person the traces are about - the exact opposite of what was
+// asked for, and irreversible. Checking "the user has no reactions left" is not
+// enough on its own: several reactions are removed one at a time, and every
+// step but the last leaves a non-empty set.
+class ReactionRevealSuppressor final {
+public:
+	ReactionRevealSuppressor();
+	~ReactionRevealSuppressor();
+
+	ReactionRevealSuppressor(const ReactionRevealSuppressor &) = delete;
+	ReactionRevealSuppressor &operator=(
+		const ReactionRevealSuppressor &) = delete;
+
+};
+
 // Drops what was decided about this dialog, because the conversation it was
 // decided about is being deleted. Whoever writes first in the next one decides
 // it again - starting over after deleting a conversation is the case this

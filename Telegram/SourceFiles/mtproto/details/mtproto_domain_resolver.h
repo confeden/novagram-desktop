@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QPointer>
 #include <QtNetwork/QNetworkReply>
 #include <optional>
+#include <set>
 
 namespace MTP::details {
 
@@ -39,6 +40,15 @@ struct ServiceWebRequest {
 	QPointer<QNetworkReply> reply;
 };
 
+// NovaGram: the three Google fronts and the Mozilla one are gone, and with
+// them the shuffling, the fake user agent and the random padding that made a
+// by-name request to a public resolver look like browsing. Names are asked of
+// the fork's own list of endpoints and of nothing else, so there is one attempt
+// per record type and no order to hide.
+//
+// The manager went with them: this class no longer owns a socket. What it still
+// owns is the cache that decides when a proxy address has to be looked up
+// again, which is why it stays a class instead of becoming a free function.
 class DomainResolver : public QObject {
 public:
 	DomainResolver(Fn<void(
@@ -49,15 +59,6 @@ public:
 	void resolve(const QString &domain);
 
 private:
-	enum class Type {
-		Mozilla,
-		Google,
-	};
-	struct Attempt {
-		Type type;
-		QString data;
-		QString host;
-	};
 	struct AttemptKey {
 		QString domain;
 		bool ipv6 = false;
@@ -74,30 +75,20 @@ private:
 		QStringList ips;
 		crl::time expireAt = 0;
 	};
-	struct Attempts {
-		std::vector<Attempt> list;
-		base::has_weak_ptr guard;
-	};
 
 	void resolve(const AttemptKey &key);
-	void sendNextRequest(const AttemptKey &key);
-	void performRequest(const AttemptKey &key, const Attempt &attempt);
+	void applyAnswer(
+		const AttemptKey &key,
+		const std::vector<QString> &ips,
+		crl::time ttl);
 	void checkExpireAndPushResult(const QString &domain);
-	void requestFinished(
-		const AttemptKey &key,
-		not_null<QNetworkReply*> reply);
-	QByteArray finalizeRequest(
-		const AttemptKey &key,
-		not_null<QNetworkReply*> reply);
 
 	Fn<void(
 		const QString &domain,
 		const QStringList &ips,
 		crl::time expireAt)> _callback;
 
-	QNetworkAccessManager _manager;
-	std::map<AttemptKey, Attempts> _attempts;
-	std::map<AttemptKey, std::vector<ServiceWebRequest>> _requests;
+	std::set<AttemptKey> _requested;
 	std::map<AttemptKey, CacheEntry> _cache;
 	crl::time _lastTimestamp = 0;
 

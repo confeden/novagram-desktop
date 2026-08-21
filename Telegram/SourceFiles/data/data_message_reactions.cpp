@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h"
 #include "data/data_saved_sublist.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "novagram/nova_read_status.h"
 #include "storage/localimageloader.h"
 #include "ui/image/image_location_factory.h"
 #include "ui/animated_icon.h"
@@ -1504,6 +1505,11 @@ std::optional<Reaction> Reactions::parse(const MTPAvailableEffect &entry) {
 }
 
 void Reactions::send(not_null<HistoryItem*> item, bool addToRecent) {
+	// The single place a reaction of this user leaves the client, so it is the
+	// single place where hiding the read status has to be taken back: both
+	// putting a reaction on and taking one back arrive here.
+	NovaGram::NoteReactionSent(item);
+
 	const auto id = item->fullId();
 	auto &api = _owner->session().api();
 	auto i = _sentRequests.find(id);

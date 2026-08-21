@@ -1578,8 +1578,13 @@ PRIVATE
     novagram/nova_autodelete.h
     novagram/nova_branding.cpp
     novagram/nova_branding.h
+    novagram/nova_calls.cpp
+    novagram/nova_calls.h
     novagram/nova_decoy.cpp
     novagram/nova_decoy.h
+    novagram/nova_doh.cpp
+    novagram/nova_doh.h
+    novagram/nova_doh_roots.h
     novagram/nova_decoy_persona.cpp
     novagram/nova_decoy_persona.h
     novagram/nova_decoy_server.cpp
