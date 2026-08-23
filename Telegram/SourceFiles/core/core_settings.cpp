@@ -1347,10 +1347,6 @@ void Settings::writePrefImpl<bool>(std::string_view key, bool value) {
 	writePrefGeneric(key, value ? "\x1"_q : QByteArray());
 }
 
-// NovaGram: the store keeps bytes anyway, only bool was ever instantiated.
-// Needed for a setting that is one of several named choices rather than a
-// flag - see novagram/nova_pin_policy, which stores the name so that the
-// meaning does not ride on the order of an enum.
 template <>
 std::optional<QByteArray> Settings::readPrefImpl<QByteArray>(
 		std::string_view key) {
