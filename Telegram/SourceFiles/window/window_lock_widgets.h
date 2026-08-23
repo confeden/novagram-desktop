@@ -84,6 +84,7 @@ private:
 	void suggestSystemUnlock();
 	void systemUnlockDone(base::SystemUnlockResult result);
 	void setupNovaPinMode();
+	void setupNovaDeviceBlocked();
 	void refreshNovaLockout();
 	void changed();
 	void submit();
@@ -103,6 +104,13 @@ private:
 	NovaGram::PinKeypad *_novaKeypad = nullptr;
 	base::Timer _novaLockoutTimer;
 	bool _novaPinMode = false;
+
+	// The data under tdata was sealed to another machine. There is no passcode
+	// that opens it, so the screen explains that and offers to start over
+	// instead of asking for one.
+	Ui::FlatLabel *_novaDeviceText = nullptr;
+	Ui::RoundButton *_novaDeviceReset = nullptr;
+	bool _novaDeviceBlocked = false;
 
 };
 

@@ -11,12 +11,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "base/system_unlock.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_device_lock.h"
 #include "novagram/nova_keypad.h"
 #include "novagram/nova_pin.h"
 #include "storage/storage_domain.h"
 #include "mainwindow.h"
 #include "core/application.h"
 #include "api/api_text_entities.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/text/text.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
@@ -110,6 +112,14 @@ PasscodeLockWidget::PasscodeLockWidget(
 		window->showLogoutConfirmation();
 	});
 
+	_novaDeviceBlocked = NovaGram::DeviceLock::Blocked();
+	if (_novaDeviceBlocked) {
+		// Nothing below applies: there is no key on this machine, so neither
+		// a passcode nor Windows Hello can lead anywhere.
+		setupNovaDeviceBlocked();
+		return;
+	}
+
 	_novaPinMode = NovaGram::PinModeEnabled();
 	if (_novaPinMode) {
 		setupNovaPinMode();
@@ -170,6 +180,45 @@ void PasscodeLockWidget::setupNovaPinMode() {
 	}
 	_novaLockoutTimer.setCallback([=] { refreshNovaLockout(); });
 	refreshNovaLockout();
+}
+
+void PasscodeLockWidget::setupNovaDeviceBlocked() {
+	// Destroyed, not hidden: LockWidget::showFinished() and showAnimated()
+	// both end in showChildren(), which sets *every* child visible again, so a
+	// hidden passcode field would come back the moment the screen is shown.
+	// Logging out is gone for a different reason - it needs a session, and the
+	// account record on this disk was never opened.
+	_passcode.destroy();
+	_submit.destroy();
+	_logout.destroy();
+
+	_novaDeviceText = Ui::CreateChild<Ui::FlatLabel>(
+		this,
+		NovaGram::DeviceLock::BlockedText(),
+		st::passcodeSystemUnlockLater);
+	_novaDeviceReset = Ui::CreateChild<Ui::RoundButton>(
+		this,
+		rpl::single(NovaGram::DeviceLock::BlockedResetButton()),
+		st::passcodeSubmit);
+	_novaDeviceReset->setClickedCallback([=] {
+		const auto russian = NovaGram::UseRussianTexts();
+		window()->show(Ui::MakeConfirmBox({
+			.text = (russian
+				? u"Все локальные файлы этой установки будут удалены, "
+					"включая ту переписку, которую здесь всё равно нельзя "
+					"прочитать. Продолжить?"_q
+				: u"Every local file of this installation will be removed, "
+					"including the history that cannot be read here anyway. "
+					"Continue?"_q),
+			.confirmed = [=](Fn<void()> close) {
+				close();
+				NovaGram::DeviceLock::ResetForNewDevice();
+				Core::Restart();
+			},
+			.confirmText = (russian ? u"Удалить"_q : u"Delete"_q),
+			.confirmStyle = &st::attentionBoxButton,
+		}));
+	});
 }
 
 void PasscodeLockWidget::refreshNovaLockout() {
@@ -304,6 +353,17 @@ void PasscodeLockWidget::paintContent(QPainter &p) {
 
 	p.setFont(st::passcodeHeaderFont);
 	p.setPen(st::windowFg);
+	if (_novaDeviceBlocked) {
+		p.drawText(
+			QRect(
+				0,
+				_novaDeviceText->y() - st::passcodeHeaderHeight,
+				width(),
+				st::passcodeHeaderHeight),
+			NovaGram::DeviceLock::BlockedTitle(),
+			style::al_center);
+		return;
+	}
 	const auto header = _novaPinMode
 		? NovaGram::UnlockTitle()
 		: tr::lng_passcode_enter(tr::now);
@@ -394,6 +454,23 @@ void PasscodeLockWidget::changed() {
 }
 
 void PasscodeLockWidget::resizeEvent(QResizeEvent *e) {
+	if (_novaDeviceBlocked) {
+		const auto available = width()
+			- st::boxRowPadding.left()
+			- st::boxRowPadding.right();
+		_novaDeviceText->resizeToWidth(available);
+		const auto contentHeight = _novaDeviceText->height()
+			+ st::passcodeSubmitSkip
+			+ _novaDeviceReset->height();
+		const auto top = std::max(
+			(height() - contentHeight) / 2,
+			st::passcodeHeaderHeight);
+		_novaDeviceText->moveToLeft(st::boxRowPadding.left(), top);
+		_novaDeviceReset->move(
+			(width() - _novaDeviceReset->width()) / 2,
+			top + _novaDeviceText->height() + st::passcodeSubmitSkip);
+		return;
+	}
 	if (_novaKeypad) {
 		_novaKeypad->resizeToWidth(_passcode->width());
 	}
@@ -429,6 +506,9 @@ void PasscodeLockWidget::resizeEvent(QResizeEvent *e) {
 
 void PasscodeLockWidget::setInnerFocus() {
 	LockWidget::setInnerFocus();
+	if (_novaDeviceBlocked) {
+		return;
+	}
 	_passcode->setFocusFast();
 }
 

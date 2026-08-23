@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_domain.h"
 
 #include "core/version.h"
+#include "novagram/nova_device_lock.h"
 #include "storage/details/storage_file_utilities.h"
 #include "storage/serialize_common.h"
 #include "mtproto/mtproto_config.h"
@@ -42,12 +43,20 @@ Domain::~Domain() = default;
 StartResult Domain::start(const QByteArray &passcode) {
 	const auto modern = startModern(passcode);
 	if (modern == StartModernResult::Success) {
-		if (_oldVersion < AppVersion) {
+		// NovaGram: NeedsRewrite() covers the migration of a file written by
+		// a build without device binding, and the first start after the owner
+		// switched binding on or off. Neither of those changes the version.
+		if (_oldVersion < AppVersion
+			|| NovaGram::DeviceLock::NeedsRewrite()) {
 			writeAccounts();
 		}
 		return StartResult::Success;
 	} else if (modern == StartModernResult::IncorrectPasscode) {
 		return StartResult::IncorrectPasscode;
+	} else if (modern == StartModernResult::WrongDevice) {
+		// Deliberately not startFromScratch(): that would write a new key
+		// over data the rightful machine can still open. The owner decides.
+		return StartResult::WrongDevice;
 	} else if (modern == StartModernResult::Failed) {
 		startFromScratch();
 		return StartResult::Success;
@@ -134,6 +143,16 @@ Domain::StartModernResult Domain::startModern(
 		LOG(("App Error: bad salt in info file, size: %1").arg(salt.size()));
 		return StartModernResult::Failed;
 	}
+
+	// NovaGram: the passcode-encrypted local key is the single value every
+	// other file under tdata hangs from, so that is what carries the device
+	// seal. Upstream derives the key from an empty passcode by default, which
+	// is why a copied tdata folder opens on any other computer.
+	keyEncrypted = NovaGram::DeviceLock::Unwrap(keyEncrypted);
+	if (NovaGram::DeviceLock::Blocked()) {
+		return StartModernResult::WrongDevice;
+	}
+
 	_passcodeKey = CreateLocalKey(passcode, salt);
 
 	EncryptedDescriptor keyInnerData, info;
@@ -222,7 +241,7 @@ void Domain::writeAccounts() {
 
 	FileWriteDescriptor key(ComputeKeyName(_dataName), path);
 	key.writeData(_passcodeKeySalt);
-	key.writeData(_passcodeKeyEncrypted);
+	key.writeData(NovaGram::DeviceLock::Wrap(_passcodeKeyEncrypted));
 
 	const auto &list = _owner->accounts();
 

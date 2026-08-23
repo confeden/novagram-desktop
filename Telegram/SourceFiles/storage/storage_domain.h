@@ -24,6 +24,9 @@ enum class StartResult : uchar {
 	Success,
 	IncorrectPasscode,
 	IncorrectPasscodeLegacy,
+	// NovaGram: the accounts file was sealed to another machine, so nothing
+	// here can be read and nothing may be overwritten either.
+	WrongDevice,
 };
 
 class Domain final {
@@ -53,6 +56,7 @@ private:
 		IncorrectPasscode,
 		Failed,
 		Empty,
+		WrongDevice,
 	};
 
 	[[nodiscard]] StartModernResult startModern(const QByteArray &passcode);

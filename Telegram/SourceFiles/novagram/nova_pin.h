@@ -55,6 +55,12 @@ void ResetFailedAttempts();
 // is the one just entered: it unlocks the stored identity for the decoy.
 void RunEmergencyWipe(const QString &pin);
 
+// Removes everything under tdata except the scratch directories the running
+// application recreates by itself. Shared with the device lock: both paths
+// that turn this installation back into a first start must sweep the same
+// way, and Windows will only let the files go while nothing has opened them.
+void WipeLocalData();
+
 [[nodiscard]] bool UseRussianTexts();
 
 [[nodiscard]] QString UnlockTitle();

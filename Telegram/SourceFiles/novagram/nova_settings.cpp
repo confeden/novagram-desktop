@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_calls.h"
 #include "novagram/nova_doh.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_device_lock.h"
 #include "novagram/nova_filenames.h"
 #include "novagram/nova_marquee_button.h"
 #include "novagram/nova_metadata.h"
@@ -64,6 +65,19 @@ constexpr auto kHideNotificationContentKey
 			"on disk cannot be read. The emergency PIN is entered under "
 			"coercion and destroys the data instead of unlocking. While a PIN "
 			"is set, the Windows Hello unlock is disabled."_q;
+}
+
+[[nodiscard]] QString DeviceLockAbout() {
+	const auto mechanism = DeviceLock::BackendName(DeviceLock::CurrentBackend());
+	return UseRussianTexts()
+		? u"Скопированная папка tdata не открывается на другом компьютере и в "
+			"другой учётной записи Windows — войти в аккаунт по ней нельзя даже "
+			"без PIN. От программы, запущенной под вашей же учётной записью "
+			"Windows, защищает только PIN. Механизм: "_q + mechanism + u"."_q
+		: u"A copied tdata folder opens neither on another computer nor under "
+			"another Windows account - it cannot sign anyone in, even with no "
+			"PIN set. Against a program running under your own Windows account "
+			"only a PIN helps. Mechanism: "_q + mechanism + u"."_q;
 }
 
 [[nodiscard]] QString KeypadAbout() {
@@ -146,6 +160,20 @@ void FillProtection(
 	Ui::AddSubsectionTitle(
 		container,
 		rpl::single(russian ? u"Защита"_q : u"Protection"_q));
+
+	// First in the section on purpose: this one works with no PIN set, and it
+	// is the only thing standing between a copied folder and the account.
+	AddToggle(
+		container,
+		(russian
+			? u"Привязать данные к этому компьютеру"_q
+			: u"Bind the data to this computer"_q),
+		DeviceLock::Enabled(),
+		[](bool toggled) { DeviceLock::SetEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(DeviceLockAbout()));
+	Ui::AddSkip(container);
 
 	const auto refreshed = container->lifetime().make_state<
 		rpl::event_stream<>

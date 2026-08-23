@@ -62,6 +62,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_device_lock.h"
 #include "novagram/nova_pin_policy.h"
 #include "novagram/nova_screen_guard.h"
 #include "novagram/nova_metadata.h"
@@ -523,12 +524,18 @@ void Application::showOpenGLCrashNotification() {
 }
 
 void Application::startDomain() {
+	// NovaGram: reads the machine binding before anything asks it to unseal
+	// the local key, and puts the mechanism it ended up with into the log.
+	NovaGram::DeviceLock::Start();
+
 	const auto state = _domain->start(QByteArray());
 	if (state != Storage::StartResult::IncorrectPasscodeLegacy) {
 		// In case of non-legacy passcoded app all global settings are ready.
 		startSettingsAndBackground();
 	}
 	if (state != Storage::StartResult::Success) {
+		// WrongDevice reuses the lock screen, which shows what happened and
+		// offers to start over instead of a passcode field.
 		lockByPasscode();
 		DEBUG_LOG(("Application Info: passcode needed..."));
 	}

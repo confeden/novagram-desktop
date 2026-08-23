@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_device_lock.h"
 #include "novagram/nova_update.h"
 #include "novagram/nova_seal.h"
 #include "platform/platform_integration.h"
@@ -268,25 +269,6 @@ bool SealIdentity(
 	return (name == u"temp"_q) || (name == u"tdummy"_q);
 }
 
-void WipeLocalData() {
-	const auto dir = QDir(BasePath());
-	const auto entries = dir.entryInfoList(
-		QDir::Files
-		| QDir::Dirs
-		| QDir::NoDotAndDotDot
-		| QDir::Hidden
-		| QDir::System);
-	for (const auto &entry : entries) {
-		if (KeptOnWipe(entry.fileName())) {
-			continue;
-		} else if (entry.isDir()) {
-			QDir(entry.absoluteFilePath()).removeRecursively();
-		} else {
-			QFile::remove(entry.absoluteFilePath());
-		}
-	}
-}
-
 [[nodiscard]] crl::time DelayForAttempts(int failedAttempts) {
 	if (failedAttempts < kFailuresBeforeDelay) {
 		return 0;
@@ -324,6 +306,25 @@ void WipeLocalData() {
 }
 
 } // namespace
+
+void WipeLocalData() {
+	const auto dir = QDir(BasePath());
+	const auto entries = dir.entryInfoList(
+		QDir::Files
+		| QDir::Dirs
+		| QDir::NoDotAndDotDot
+		| QDir::Hidden
+		| QDir::System);
+	for (const auto &entry : entries) {
+		if (KeptOnWipe(entry.fileName())) {
+			continue;
+		} else if (entry.isDir()) {
+			QDir(entry.absoluteFilePath()).removeRecursively();
+		} else {
+			QFile::remove(entry.absoluteFilePath());
+		}
+	}
+}
 
 bool ValidPin(const QString &pin) {
 	if (pin.size() < kMinPinLength || pin.size() > kMaxPinLength) {
@@ -553,6 +554,11 @@ void RunEmergencyWipe(const QString &pin) {
 	// remove them, so only the upstream logout cleanup applies there.
 	if (!Core::App().domain().started()) {
 		WipeLocalData();
+		// The sweep took tdata/novagram_device with everything else. Without
+		// this the decoy's first accounts write would seal to a secret no next
+		// start can recover, and the wipe would end at the "another device"
+		// screen instead of the disguise.
+		DeviceLock::Forget();
 	}
 	// Re-armed last, because the sweep above removes the marker together with
 	// everything else: the decoy must survive its own wipe.
