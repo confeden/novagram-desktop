@@ -14,7 +14,7 @@ namespace NovaGram {
 namespace {
 
 // Both halves of the joint release tag. Bump together with the bases.
-constexpr auto kReleaseTag = "v7.1.2/12.10.1";
+constexpr auto kReleaseTag = "v7.1.3/12.10.1";
 constexpr auto kProjectUrl = "https://github.com/confeden/Novagram";
 
 // The base application's own name, i.e. the value ::AppName held before the
