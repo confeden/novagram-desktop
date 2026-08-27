@@ -55,11 +55,9 @@ private:
     };
 
     void requestPeers();
-    void requestSponsored();
 
 	void finish(PeerSearchResult result);
 	void finishPeers(mtpRequestId requestId, PeerSearchResult result);
-    void finishSponsored(mtpRequestId requestId, PeerSearchResult result);
 
     const not_null<Main::Session*> _session;
     const Type _type;
@@ -69,7 +67,6 @@ private:
 
 	base::flat_map<QString, CacheEntry> _cache;
 	base::flat_map<mtpRequestId, QString> _peerRequests;
-	base::flat_map<mtpRequestId, QString> _sponsoredRequests;
 
 };
 

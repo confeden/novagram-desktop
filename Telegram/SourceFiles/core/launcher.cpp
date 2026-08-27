@@ -184,32 +184,33 @@ void ComputeInstallBetaVersions() {
 	}
 }
 
+// Upstream generates this number once and keeps it in tdata/usertag for the
+// life of the installation. Nothing ever resets it - Account::reset() does not
+// touch it either - so one permanent identifier, in the clear, next to the data
+// it identifies, ties together every account that has ever been signed in on
+// this computer and every session any of them ever had.
+//
+// Nothing in this fork needs it to persist. It has two readers. The crash
+// annotation is not built at all here (TDESKTOP_DISABLE_CRASH_REPORTS, and the
+// line is gone from core/crash_reports.cpp regardless). The other is support
+// mode, where OccupationTag() tells this client apart from another client of
+// the same support account while an occupied draft is valid - sixty seconds,
+// refreshed every thirty (support/support_helper.cpp, kOccupyFor). A number
+// generated once per run answers that exactly as well as a stored one; the
+// only difference is that a draft left by the previous run of this same client
+// reads as somebody else's for up to a minute after a restart.
+//
+// So it is generated in memory, never written, and a usertag left behind by an
+// earlier version is deleted rather than read - otherwise the identifier this
+// removes would go on living in the folder of everyone who upgraded.
 void ComputeInstallationTag() {
-	InstallationTag = 0;
-	auto file = QFile(cWorkingDir() + u"tdata/usertag"_q);
-	if (file.open(QIODevice::ReadOnly)) {
-		const auto result = file.read(
-			reinterpret_cast<char*>(&InstallationTag),
-			sizeof(uint64));
-		if (result != sizeof(uint64)) {
-			InstallationTag = 0;
-		}
-		file.close();
-	}
-	if (!InstallationTag) {
-		auto generator = std::mt19937(std::random_device()());
-		auto distribution = std::uniform_int_distribution<uint64>();
-		do {
-			InstallationTag = distribution(generator);
-		} while (!InstallationTag);
+	QFile(cWorkingDir() + u"tdata/usertag"_q).remove();
 
-		if (file.open(QIODevice::WriteOnly)) {
-			file.write(
-				reinterpret_cast<char*>(&InstallationTag),
-				sizeof(uint64));
-			file.close();
-		}
-	}
+	auto generator = std::mt19937(std::random_device()());
+	auto distribution = std::uniform_int_distribution<uint64>();
+	do {
+		InstallationTag = distribution(generator);
+	} while (!InstallationTag);
 }
 
 bool MoveLegacyAlphaFolder(const QString &folder, const QString &file) {

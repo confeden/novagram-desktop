@@ -17,8 +17,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace NovaGram::Seal {
 namespace {
 
-constexpr auto kScalarIterations = 200000;
-
 struct KeyDeleter {
 	void operator()(EVP_PKEY *value) const {
 		EVP_PKEY_free(value);
@@ -38,8 +36,9 @@ using KeyContext = std::unique_ptr<EVP_PKEY_CTX, ContextDeleter>;
 // worth about twenty bits, so the derivation cost is the whole defence.
 [[nodiscard]] QByteArray Scalar(
 		const QString &pin,
-		const QByteArray &salt) {
-	if (pin.isEmpty() || salt.isEmpty()) {
+		const QByteArray &salt,
+		int iterations) {
+	if (pin.isEmpty() || salt.isEmpty() || iterations <= 0) {
 		return QByteArray();
 	}
 	const auto passcode = pin.toUtf8();
@@ -49,7 +48,7 @@ using KeyContext = std::unique_ptr<EVP_PKEY_CTX, ContextDeleter>;
 		passcode.size(),
 		reinterpret_cast<const uchar*>(salt.constData()),
 		salt.size(),
-		kScalarIterations,
+		iterations,
 		EVP_sha512(),
 		result.size(),
 		reinterpret_cast<uchar*>(result.data()));
@@ -138,8 +137,11 @@ using KeyContext = std::unique_ptr<EVP_PKEY_CTX, ContextDeleter>;
 
 } // namespace
 
-QByteArray PublicKey(const QString &pin, const QByteArray &salt) {
-	return PublicOf(PrivateKey(Scalar(pin, salt)));
+QByteArray PublicKey(
+		const QString &pin,
+		const QByteArray &salt,
+		int iterations) {
+	return PublicOf(PrivateKey(Scalar(pin, salt, iterations)));
 }
 
 Envelope SealTo(const QByteArray &publicKey) {
@@ -164,8 +166,9 @@ Envelope SealTo(const QByteArray &publicKey) {
 QByteArray Open(
 		const QString &pin,
 		const QByteArray &salt,
-		const QByteArray &ephemeral) {
-	const auto mine = PrivateKey(Scalar(pin, salt));
+		const QByteArray &ephemeral,
+		int iterations) {
+	const auto mine = PrivateKey(Scalar(pin, salt, iterations));
 	const auto recipient = PublicOf(mine);
 	if (recipient.isEmpty() || ephemeral.size() != kKeySize) {
 		return QByteArray();

@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "payments/payments_non_panel_process.h"
 #include "boxes/peers/edit_peer_info_box.h"
 #include "boxes/share_box.h"
+#include "boxes/abstract_box.h" // Ui::show().
 #include "boxes/connection_box.h"
 #include "boxes/gift_premium_box.h"
 #include "boxes/edit_privacy_box.h"
@@ -446,15 +447,24 @@ bool ApplyWebProxy(
 		Window::SessionController *controller,
 		const Match &match,
 		const QVariant &context) {
-	auto params = url_parse_params(
-		match->captured(1),
-		qthelp::UrlParamNameTransform::ToLower);
-	ProxiesBoxController::ShowApplyConfirmation(
-		controller,
-		MTP::ProxyData::Type::Web,
-		params);
+	// NovaGram: a WEB proxy is not a route, it is code. Connecting through one
+	// loads a page from the provider inside the client and relays every MTProto
+	// frame through that page's JavaScript, so a tapped link - in a chat
+	// message, in a channel, from any sender - must not be able to offer it.
+	// The other proxy types keep upstream's confirmation box: they only move
+	// packets. Manual entry in the connection settings is left working.
+	auto box = Ui::MakeInformBox(NovaGram::UseRussianTexts()
+		? u"NovaGram не устанавливает WEB-прокси по ссылке: прокси этого типа "
+			u"запускает внутри клиента веб-страницу поставщика. Если вы ему "
+			u"доверяете, добавьте прокси вручную в настройках соединения."_q
+		: u"NovaGram does not install a WEB proxy from a link: this type runs "
+			u"the provider's web page inside the client. If you trust the "
+			u"provider, add the proxy by hand in the connection settings."_q);
 	if (controller) {
+		controller->show(std::move(box));
 		controller->window().activate();
+	} else {
+		Ui::show(std::move(box));
 	}
 	return true;
 }

@@ -59,7 +59,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Ui {
 namespace {
 
-constexpr auto kResolveAddressDelay = 3 * crl::time(1000);
+// NovaGram: the delay used to debounce a reverse-geocoding request to
+// api.mapbox.com. That request is gone (Core::ResolveLocationAddress), the
+// label under the map is now the coordinates the client already has, and
+// there is nothing left to wait for - three seconds of "Loading..." after
+// every pan would be an artefact of a network call that no longer happens.
+constexpr auto kResolveAddressDelay = crl::time(0);
 constexpr auto kSearchDebounceDelay = crl::time(900);
 
 Core::GeoLocation LastExactLocation;

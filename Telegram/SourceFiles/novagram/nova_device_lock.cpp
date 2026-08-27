@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "logs.h"
 #include "main/main_domain.h"
+#include "novagram/nova_decoy.h"
 #include "novagram/nova_pin.h"
 #include "settings.h"
 #include "storage/localstorage.h"
@@ -43,7 +44,11 @@ namespace {
 constexpr auto kEnabledKey = "novagram_device_lock"_cs;
 
 constexpr auto kFileMagic = quint32(0x4E56444C); // NVDL
-constexpr auto kFileVersion = qint32(1);
+// Version 2 appended the "a pin is armed here" flag. Version 1 files are still
+// read - rejecting them would put every existing installation on the "another
+// device" screen - and are lifted to 2 by the first write.
+constexpr auto kFileVersion = qint32(2);
+constexpr auto kFileVersionMin = qint32(1);
 
 // Prefix of a wrapped local key. It sits in front of a value that used to be
 // raw ciphertext, whose first bytes are an AES-IGE key fingerprint, so a
@@ -59,12 +64,25 @@ struct Binding {
 	State state = State::Fresh;
 	Backend backend = Backend::None;
 	QByteArray secret;
+	// What the binding file holds in front of the secret: the DPAPI blob, or
+	// the public salt of the fingerprint fallback. Kept so that the file can
+	// be rewritten - to carry the pin flag - without recreating the binding.
+	QByteArray material;
+	bool enabled = false;
+	// True when nothing on this machine identifies it, so no binding can be
+	// created here at all. Told apart from "creating the binding failed",
+	// which is a fault and makes writes refuse.
+	bool machineless = false;
 };
 
 std::optional<Binding> GlobalBinding;
 bool GlobalBlocked/* = false*/;
 bool GlobalDiskKnown/* = false*/;
 bool GlobalDiskWrapped/* = false*/;
+
+// Survives the Binding it was read from: SetEnabled() drops the binding file
+// and lets the next write recreate it, and the flag has to ride through that.
+std::optional<bool> GlobalPinArmed;
 
 [[nodiscard]] QByteArray FingerprintInfo() {
 	return QByteArray("NovaGram device binding v1");
@@ -361,7 +379,8 @@ bool GlobalDiskWrapped/* = false*/;
 		<< kFileVersion
 		<< qint32(enabled ? 1 : 0)
 		<< qint32(backend)
-		<< material;
+		<< material
+		<< qint32(GlobalPinArmed.value_or(false) ? 1 : 0);
 	if (stream.status() != QDataStream::Ok || !file.commit()) {
 		LOG(("NovaGram device lock: failed to write the binding file"));
 		return false;
@@ -383,7 +402,11 @@ bool GlobalDiskWrapped/* = false*/;
 			Backend::None,
 			QByteArray(),
 			false);
-		return Binding{ .state = State::Off, .backend = Backend::None };
+		return Binding{
+			.state = State::Off,
+			.backend = Backend::None,
+			.machineless = true,
+		};
 	}
 	auto secret = QByteArray(kSecretSize, Qt::Uninitialized);
 	base::RandomFill(secret.data(), secret.size());
@@ -400,6 +423,8 @@ bool GlobalDiskWrapped/* = false*/;
 			.state = State::Bound,
 			.backend = Backend::Dpapi,
 			.secret = secret,
+			.material = guarded,
+			.enabled = true,
 		};
 	}
 	LOG(("NovaGram device lock: DPAPI is unavailable, "
@@ -417,6 +442,8 @@ bool GlobalDiskWrapped/* = false*/;
 		bytes::make_span(fingerprint),
 		bytes::make_span(info)));
 	if (!WriteBinding(Backend::Fingerprint, salt, true)) {
+		// A fault, not "this machine cannot be bound": machineless stays false
+		// so that every write refuses instead of quietly going out unsealed.
 		return Binding{ .state = State::Off, .backend = Backend::None };
 	}
 	LOG(("NovaGram device lock: bound through the machine fingerprint"));
@@ -424,6 +451,8 @@ bool GlobalDiskWrapped/* = false*/;
 		.state = State::Bound,
 		.backend = Backend::Fingerprint,
 		.secret = secret,
+		.material = salt,
+		.enabled = true,
 	};
 }
 
@@ -445,17 +474,36 @@ bool GlobalDiskWrapped/* = false*/;
 	stream >> magic >> version >> enabled >> backend >> material;
 	if (stream.status() != QDataStream::Ok
 		|| magic != kFileMagic
-		|| version != kFileVersion) {
+		|| version < kFileVersionMin
+		|| version > kFileVersion) {
 		// A binding file that cannot be parsed counts as a foreign one. The
 		// opposite - quietly rebinding - would hand a thief a way to skip the
 		// check by corrupting one file.
 		LOG(("NovaGram device lock: the binding file is not readable"));
 		return Binding{ .state = State::Foreign };
 	}
-	if (!enabled) {
-		return Binding{ .state = State::Off, .backend = Backend::None };
+	if (version >= 2) {
+		auto armed = qint32(0);
+		stream >> armed;
+		if (stream.status() != QDataStream::Ok) {
+			LOG(("NovaGram device lock: the binding file is truncated"));
+			return Binding{ .state = State::Foreign };
+		}
+		GlobalPinArmed = (armed != 0);
+	} else {
+		// Written before the flag existed. Unknown, not "no pin was ever set":
+		// the first read of tdata/novagram_pin lifts it to the truth.
+		GlobalPinArmed = std::nullopt;
 	}
 	const auto fingerprint = MachineFingerprint();
+	if (!enabled) {
+		return Binding{
+			.state = State::Off,
+			.backend = Backend::None,
+			.material = material,
+			.machineless = fingerprint.isEmpty(),
+		};
+	}
 	if (fingerprint.isEmpty()) {
 		return Binding{ .state = State::Foreign };
 	}
@@ -467,6 +515,8 @@ bool GlobalDiskWrapped/* = false*/;
 			.secret = FromBytes(openssl::HmacSha256(
 				bytes::make_span(fingerprint),
 				bytes::make_span(info))),
+			.material = material,
+			.enabled = true,
 		};
 	}
 #ifdef Q_OS_WIN
@@ -484,6 +534,8 @@ bool GlobalDiskWrapped/* = false*/;
 			.state = State::Bound,
 			.backend = Backend::Dpapi,
 			.secret = secret,
+			.material = material,
+			.enabled = true,
 		};
 	}
 #endif // Q_OS_WIN
@@ -525,11 +577,44 @@ bool GlobalDiskWrapped/* = false*/;
 		&& (memcmp(stored.constData(), kWrapMagic, kWrapMagicSize) == 0);
 }
 
+// The magic alone is what goes in front of key_data, so that value keeps the
+// construction it already has on disk. Every other file adds its own name, so
+// that a blob sealed for one of them does not open as another.
+[[nodiscard]] QByteArray SealContext(SealedFile file) {
+	const auto magic = QByteArray(kWrapMagic, kWrapMagicSize);
+	switch (file) {
+	case SealedFile::Pin: return magic + "novagram_pin";
+	case SealedFile::Decoy: return magic + "novagram_decoy";
+	}
+	Unexpected("File in NovaGram::DeviceLock::SealContext.");
+}
+
+// Shared by Wrap() and SealPayload(). Empty additional data is never passed
+// in, so an empty result always means "sealing failed, refuse the write".
+[[nodiscard]] QByteArray SealWith(
+		const QByteArray &secret,
+		const QByteArray &additional,
+		const QByteArray &plain) {
+	auto nonce = QByteArray(kNonceSize, Qt::Uninitialized);
+	base::RandomFill(nonce.data(), nonce.size());
+	const auto sealed = AesGcmSeal(secret, nonce, plain, additional);
+	return sealed.isEmpty()
+		? QByteArray()
+		: (QByteArray(kWrapMagic, kWrapMagicSize) + nonce + sealed);
+}
+
 void RewriteAccounts() {
 	auto &domain = Core::App().domain();
 	if (domain.started()) {
 		domain.local().writeAccounts();
 	}
+}
+
+// Every fork file that goes through SealPayload(). key_data is not here - it
+// belongs to the storage domain and is written by RewriteAccounts().
+void RewriteSealedFiles() {
+	RewriteState();
+	Decoy::Rewrite();
 }
 
 } // namespace
@@ -561,57 +646,94 @@ bool Blocked() {
 }
 
 bool Enabled() {
-	return Core::App().settings().readPref<bool>(kEnabledKey, true);
+	// The decoy marker is read by the very first branding call, which can come
+	// before the application object exists. The preference defaults to on, so
+	// answering from the default there gives the same answer settings would.
+	return !Core::IsAppLaunched()
+		|| Core::App().settings().readPref<bool>(kEnabledKey, true);
+}
+
+bool DataSealed() {
+	return GlobalDiskKnown && GlobalDiskWrapped;
 }
 
 void SetEnabled(bool enabled) {
-	if (GlobalBlocked
-		|| (Enabled() == enabled)
-		|| !Core::App().domain().started()) {
+	if (GlobalBlocked || !Core::App().domain().started()) {
+		return;
+	} else if ((Enabled() == enabled) && (DataSealed() == enabled)) {
 		return;
 	}
+	// Falling through with Enabled() == enabled means the preference and the
+	// disk disagree. The settings toggle draws the disk, so what the owner just
+	// asked for is a retry, not a no-op.
 	Core::App().settings().writePref<bool>(kEnabledKey, enabled);
 	Local::writeSettings();
 	if (!enabled) {
-		// Order matters: the accounts file is written unbound first, and only
-		// then the secret goes. A crash between the two steps must never
-		// leave a wrapped file with no binding able to open it.
+		// Order matters (N15): every file that carries the seal is written
+		// unbound first, and only then the secret goes. A key dropped ahead of
+		// them would leave sealed files that nothing can ever open again - the
+		// pin configuration and the decoy marker included, not only key_data.
 		RewriteAccounts();
+		RewriteSealedFiles();
 		QFile::remove(BindingPath());
 		GlobalBinding = Binding{ .state = State::Off };
 	} else {
-		// Reachable only from the off state, so what is on disk is unbound
-		// and dropping the stale marker orphans nothing.
+		// Reachable from the off state, where what is on disk is unbound and
+		// dropping the stale marker orphans nothing, and from a state where
+		// the preference says bound and the disk is not - and there too the
+		// disk holds nothing sealed to the marker being removed.
 		QFile::remove(BindingPath());
 		GlobalBinding = std::nullopt;
 		RewriteAccounts();
+		// After the accounts write, because that is what creates the binding:
+		// these have no way of their own to conjure a secret worth sealing to.
+		RewriteSealedFiles();
 	}
 	// RewriteAccounts() went through Wrap(), which left GlobalDiskWrapped
 	// describing what actually landed on the disk.
 }
 
 QByteArray Wrap(const QByteArray &keyEncrypted) {
-	if (keyEncrypted.isEmpty() || !Enabled()) {
+	if (keyEncrypted.isEmpty()) {
+		// There is nothing to seal and nothing worth writing either, so this
+		// is a refusal like every other empty answer from here.
+		return QByteArray();
+	} else if (!Enabled()) {
+		GlobalDiskKnown = true;
 		GlobalDiskWrapped = false;
 		return keyEncrypted;
 	}
 	const auto secret = SecretForWriting();
 	if (secret.size() != kSecretSize) {
-		GlobalDiskWrapped = false;
-		return keyEncrypted;
+		if (Ensure().machineless) {
+			// Nothing on this machine identifies it, so there is no binding to
+			// be had here and none was ever claimed - CreateBinding() said so
+			// in the log and recorded it. Refusing the write instead would
+			// leave such a machine unable to keep an account at all.
+			GlobalDiskKnown = true;
+			GlobalDiskWrapped = false;
+			return keyEncrypted;
+		}
+		// A mechanism exists and could not be used. Writing the key unbound
+		// here is a silent unbind: the owner asked for binding, the file would
+		// stop being bound, and nothing would say so. Android refuses the same
+		// write (jni/tgnet/Config.cpp), and the previous file stays valid.
+		LOG(("NovaGram device lock: no machine secret for the local key, "
+			"refusing to write the accounts file unbound"));
+		return QByteArray();
 	}
-	auto nonce = QByteArray(kNonceSize, Qt::Uninitialized);
-	base::RandomFill(nonce.data(), nonce.size());
-	const auto additional = QByteArray(kWrapMagic, kWrapMagicSize);
-	const auto sealed = AesGcmSeal(secret, nonce, keyEncrypted, additional);
-	if (sealed.isEmpty()) {
+	const auto wrapped = SealWith(
+		secret,
+		QByteArray(kWrapMagic, kWrapMagicSize),
+		keyEncrypted);
+	if (wrapped.isEmpty()) {
 		LOG(("NovaGram device lock: sealing the local key failed, "
-			"writing it unbound"));
-		GlobalDiskWrapped = false;
-		return keyEncrypted;
+			"refusing to write the accounts file unbound"));
+		return QByteArray();
 	}
+	GlobalDiskKnown = true;
 	GlobalDiskWrapped = true;
-	return additional + nonce + sealed;
+	return wrapped;
 }
 
 QByteArray Unwrap(const QByteArray &stored) {
@@ -642,6 +764,73 @@ QByteArray Unwrap(const QByteArray &stored) {
 	return opened;
 }
 
+QByteArray SealPayload(SealedFile file, const QByteArray &plain) {
+	if (plain.isEmpty() || !Enabled()) {
+		return plain;
+	}
+	const auto secret = SecretForWriting();
+	if (secret.size() != kSecretSize) {
+		// Same split as in Wrap(): no mechanism here is an honest unsealed
+		// write, a mechanism that failed is a refusal.
+		return Ensure().machineless ? plain : QByteArray();
+	}
+	return SealWith(secret, SealContext(file), plain);
+}
+
+OpenResult OpenPayload(
+		SealedFile file,
+		const QByteArray &stored,
+		QByteArray &plain) {
+	if (!IsWrapped(stored)) {
+		plain = stored;
+		return OpenResult::Plain;
+	}
+	const auto &binding = Ensure();
+	if (binding.state != State::Bound) {
+		return OpenResult::Foreign;
+	}
+	const auto opened = AesGcmOpen(
+		binding.secret,
+		stored.mid(kWrapMagicSize, kNonceSize),
+		stored.mid(kWrapMagicSize + kNonceSize),
+		SealContext(file));
+	if (opened.isEmpty()) {
+		// Deliberately not GlobalBlocked: a side file this machine cannot open
+		// is handled by whoever owns it, and never by taking the whole
+		// installation away from the owner.
+		return OpenResult::Foreign;
+	}
+	plain = opened;
+	return OpenResult::Opened;
+}
+
+bool PinArmed() {
+	// The flag is read out of the binding file, so make sure it was read.
+	[[maybe_unused]] const auto &binding = Ensure();
+	return GlobalPinArmed.value_or(false);
+}
+
+void SetPinArmed(bool armed) {
+	if (GlobalPinArmed && (*GlobalPinArmed == armed)) {
+		return;
+	} else if (GlobalBlocked || (Ensure().state == State::Foreign)) {
+		// The binding file holds the only copy of the machine secret's
+		// material. Rewriting one we could not read would destroy it.
+		return;
+	}
+	GlobalPinArmed = armed;
+	if ((Ensure().state == State::Fresh) && Enabled()) {
+		// Create the binding rather than record "there is none" beside the
+		// flag: a file saying enabled=0 would freeze this installation as
+		// portable while the preference still promises the opposite.
+		[[maybe_unused]] const auto created = SecretForWriting();
+	}
+	const auto &binding = Ensure();
+	if (!WriteBinding(binding.backend, binding.material, binding.enabled)) {
+		LOG(("NovaGram device lock: could not record the pin flag"));
+	}
+}
+
 bool NeedsRewrite() {
 	if (!GlobalDiskKnown || GlobalBlocked) {
 		return false;
@@ -660,6 +849,11 @@ void Forget() {
 	GlobalBlocked = false;
 	GlobalDiskKnown = false;
 	GlobalDiskWrapped = false;
+	// The pin flag goes with it. Whoever calls this has just turned the
+	// installation back into a first start, and a flag left saying "a pin is
+	// armed here" would make the next launch report the missing pin file as
+	// tampering - inside the decoy, of all places.
+	GlobalPinArmed = std::nullopt;
 }
 
 QString BlockedTitle() {

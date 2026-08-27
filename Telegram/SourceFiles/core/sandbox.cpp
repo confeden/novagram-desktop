@@ -52,6 +52,40 @@ base::options::toggle OptionDeadlockDetector({
 constexpr auto kCleanupIpcTimeout = 10 * crl::time(1000);
 constexpr auto kCleanupQuitTimeout = 30 * crl::time(1000);
 
+// What everything that is not MTProto goes through when the selected Telegram
+// proxy cannot carry it.
+//
+// An MTProto or WEB proxy speaks the Telegram protocol and nothing else, so it
+// is not an answer for an ordinary HTTP request - image loading, web files,
+// payment processors, the update check. Upstream answers that by forcing
+// NoProxy on the whole process, which also overrides the proxy the operating
+// system was told to use, and every one of those requests then leaves with the
+// real address. The system configuration is the honest fall-back and the one
+// the fork's own requests already use (novagram/nova_doh.cpp, ProxyFor).
+//
+// It is a factory rather than an application-wide proxy because the two kinds
+// of caller need different answers. A URL request - which is what every
+// QNetworkAccessManager in the process asks with - gets the system
+// configuration. MTProto's own sockets ask with QNetworkProxyQuery::TcpSocket
+// and keep the answer they have today, no proxy: that transport does its own
+// proxying, and putting a second one underneath it would either break the
+// connection or send it somewhere the user never chose.
+class NonMtprotoSystemProxyFactory final : public QNetworkProxyFactory {
+public:
+	QList<QNetworkProxy> queryProxy(
+			const QNetworkProxyQuery &query) override {
+		if (query.queryType() != QNetworkProxyQuery::UrlRequest) {
+			return { QNetworkProxy(QNetworkProxy::NoProxy) };
+		}
+		auto result = QNetworkProxyFactory::systemProxyForQuery(query);
+		if (result.isEmpty()) {
+			result.append(QNetworkProxy(QNetworkProxy::NoProxy));
+		}
+		return result;
+	}
+
+};
+
 } // namespace
 
 const char kOptionDeadlockDetector[] = "deadlock-detector";
@@ -594,7 +628,11 @@ void Sandbox::refreshGlobalProxy() {
 		|| Core::App().settings().proxy().isSystem()) {
 		QNetworkProxyFactory::setUseSystemConfiguration(true);
 	} else {
-		QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
+		// An MTProto or WEB proxy, or none at all - either way there is
+		// nothing here an HTTP request can use, and NoProxy would be a
+		// decision about the whole process rather than about Telegram.
+		QNetworkProxyFactory::setApplicationProxyFactory(
+			new NonMtprotoSystemProxyFactory());
 	}
 }
 

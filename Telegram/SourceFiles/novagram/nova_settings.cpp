@@ -68,8 +68,9 @@ constexpr auto kHideNotificationContentKey
 }
 
 [[nodiscard]] QString DeviceLockAbout() {
+	const auto russian = UseRussianTexts();
 	const auto mechanism = DeviceLock::BackendName(DeviceLock::CurrentBackend());
-	return UseRussianTexts()
+	const auto about = russian
 		? u"Скопированная папка tdata не открывается на другом компьютере и в "
 			"другой учётной записи Windows — войти в аккаунт по ней нельзя даже "
 			"без PIN. От программы, запущенной под вашей же учётной записью "
@@ -78,6 +79,19 @@ constexpr auto kHideNotificationContentKey
 			"another Windows account - it cannot sign anyone in, even with no "
 			"PIN set. Against a program running under your own Windows account "
 			"only a PIN helps. Mechanism: "_q + mechanism + u"."_q;
+	if (!DeviceLock::Enabled() || DeviceLock::DataSealed()) {
+		return about;
+	}
+	// The switch draws what is on the disk, so it is already off here while the
+	// preference says otherwise. Saying only "off" would leave the owner
+	// wondering why it moved by itself.
+	return (russian
+		? u"Привязка включена в настройках, но данные на диске сейчас не "
+			"привязаны: этому компьютеру нечем хранить ключ. Включите "
+			"переключатель ещё раз, чтобы повторить попытку.\n\n"_q
+		: u"Binding is on in the settings, but the data on the disk is not "
+			"bound right now: this computer has nothing to keep the key in. "
+			"Switch it on again to retry.\n\n"_q) + about;
 }
 
 [[nodiscard]] QString KeypadAbout() {
@@ -163,16 +177,47 @@ void FillProtection(
 
 	// First in the section on purpose: this one works with no PIN set, and it
 	// is the only thing standing between a copied folder and the account.
-	AddToggle(
-		container,
-		(russian
-			? u"Привязать данные к этому компьютеру"_q
-			: u"Bind the data to this computer"_q),
-		DeviceLock::Enabled(),
-		[](bool toggled) { DeviceLock::SetEnabled(toggled); });
+	//
+	// Drawn from DataSealed() and not from the preference: a preference can
+	// outlive the mechanism behind it, and a switch that says "bound" over a
+	// tdata folder that is portable again states the promise backwards.
+	const auto bindingRefreshed = container->lifetime().make_state<
+		rpl::event_stream<>
+	>();
+	const auto bindingApplying = container->lifetime().make_state<bool>(false);
+	const auto binding = container->add(
+		object_ptr<MarqueeButton>(
+			container,
+			(russian
+				? u"Привязать данные к этому компьютеру"_q
+				: u"Bind the data to this computer"_q),
+			st::settingsButtonNoIcon));
+	binding->toggleOn(rpl::single(
+		rpl::empty
+	) | rpl::then(
+		bindingRefreshed->events()
+	) | rpl::map([] {
+		return DeviceLock::DataSealed();
+	}));
+	binding->toggledChanges(
+	) | rpl::on_next([=](bool toggled) {
+		if (*bindingApplying) {
+			// The switch is being put back to what actually landed on the
+			// disk. That is an answer, not a request from the owner.
+			return;
+		}
+		*bindingApplying = true;
+		DeviceLock::SetEnabled(toggled);
+		bindingRefreshed->fire({});
+		*bindingApplying = false;
+	}, binding->lifetime());
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(DeviceLockAbout()));
+	Ui::AddDividerText(
+		container,
+		rpl::single(rpl::empty) | rpl::then(
+			bindingRefreshed->events()
+		) | rpl::map([] { return DeviceLockAbout(); }));
 	Ui::AddSkip(container);
 
 	const auto refreshed = container->lifetime().make_state<
@@ -343,15 +388,18 @@ void FillAutoDelete(
 [[nodiscard]] QString ReadStatusAbout() {
 	return UseRussianTexts()
 		? u"Когда вам пишет незнакомец, а вы ещё не отвечали, галочки "
-			"прочтения ему не отправляются. Правило заводится по первому "
-			"такому сообщению; группы, каналы, боты и «Избранное» не "
-			"затрагиваются. Ваш ответ или реакция снимают скрытие, а для Telegram "
-			"такая переписка остаётся непрочитанной."_q
+			"прочтения ему не отправляются, а его истории смотрятся без "
+			"уведомления автора — в списке просмотревших вас нет. Правило "
+			"заводится по первому такому сообщению; группы, каналы, боты и "
+			"«Избранное» не затрагиваются. Ваш ответ или реакция снимают "
+			"скрытие, а для Telegram такая переписка остаётся непрочитанной."_q
 		: u"When a stranger writes to you and you have not answered yet, the "
-			"read marks are never sent to them. The rule is made on the first "
-			"such message; groups, channels, bots and Saved Messages are left "
-			"alone. An answer or a reaction of yours lifts it, and for Telegram "
-			"conversation stays unread."_q;
+			"read marks are never sent to them, and their stories are watched "
+			"without the author being told - the viewer list does not name "
+			"you. The rule is made on the first such message; groups, "
+			"channels, bots and Saved Messages are left alone. An answer or a "
+			"reaction of yours lifts it, and for Telegram the conversation "
+			"stays unread."_q;
 }
 
 void FillReadStatus(
@@ -620,15 +668,15 @@ void FillFiles(not_null<Ui::VerticalLayout*> container) {
 
 [[nodiscard]] QString NotificationsAbout() {
 	return UseRussianTexts()
-		? u"На ПК текст уведомления собирается здесь, из уже полученного "
-			"сообщения, и никуда не отправляется — скрывать его не от кого, "
-			"поэтому переключатель неактивен. Убрать имя и текст с экрана "
-			"можно стоковыми флажками в настройках уведомлений Telegram."_q
-		: u"On the desktop the text of a notification is composed here, out of "
-			"a message already received, and is sent nowhere — there is no one "
-			"to hide it from, which is why this switch is inactive. The stock "
-			"Name and Text checkboxes in the Telegram notification settings "
-			"take the name and the text off the screen."_q;
+		? u"Уведомление рисует Windows, и его текст остаётся в Центре "
+			"уведомлений — за пределами tdata, а значит и стирания. "
+			"Переключатель оставляет имя отправителя, а текст заменяет "
+			"заглушкой; имя и аватар убираются стоковыми флажками Telegram."_q
+		: u"The notification is drawn by Windows, and its text stays in the "
+			"Action Center — outside tdata, and so outside the wipe. This "
+			"switch leaves the sender's name and replaces the text with a "
+			"placeholder; the name and the avatar are taken off by the stock "
+			"Telegram checkboxes."_q;
 }
 
 void FillNotifications(
@@ -665,20 +713,13 @@ void FillNotifications(
 			? u"Содержимое уведомлений"_q
 			: u"Notification contents"_q));
 
-	// Shown, and deliberately not usable. On this platform the text of a
-	// notification is composed here, out of a message the client already
-	// received over its own connection, and no push service ever sees it - so
-	// there is nothing for this switch to protect against that the account
-	// setting above does not already cover. It stays visible because the
-	// Android fork has it and the two settings screens are read side by side;
-	// a row that quietly disappeared would look like a feature that had been
-	// lost. The divider under it says why it is grey.
-	const auto hide = AddToggle(
+	AddToggle(
 		container,
 		HideNotificationContentTitle(),
 		HideNotificationContentEnabled(),
-		[](bool) {});
-	hide->setDisabled(true);
+		[](bool toggled) {
+			SetHideNotificationContentEnabled(toggled);
+		});
 
 	Ui::AddSkip(container);
 	Ui::AddDividerText(container, rpl::single(NotificationsAbout()));
@@ -733,17 +774,17 @@ void FillSending(not_null<Ui::VerticalLayout*> container) {
 
 [[nodiscard]] QString UpdateAbout() {
 	return UseRussianTexts()
-		? u"Не чаще раза в восемь часов NovaGram читает файл о последней версии "
-			"на raw.githubusercontent.com — единственный сетевой запрос мимо "
-			"Telegram, по нему видно только то, что клиент запущен. "
-			"Установщик проверяется по контрольной сумме и заменяет только "
+		? u"Не чаще раза в восемь часов NovaGram спрашивает api.github.com о "
+			"последней версии — единственный сетевой запрос мимо Telegram, по "
+			"нему видно только то, что клиент запущен. Установщик проверяется "
+			"по контрольной сумме и по подписи NovaGram и заменяет только "
 			"программу: данные, профили и PIN остаются на месте."_q
-		: u"At most once every eight hours NovaGram reads a file with the "
-			"latest version from raw.githubusercontent.com — the only network "
-			"request it makes outside Telegram, and all it reveals is that the "
-			"client is running. The installer is verified against a checksum "
-			"and replaces only the program: data, profiles and PINs stay where "
-			"they are."_q;
+		: u"At most once every eight hours NovaGram asks api.github.com about "
+			"the latest version — the only network request it makes outside "
+			"Telegram, and all it reveals is that the client is running. The "
+			"installer is checked against a checksum and against the NovaGram "
+			"signature, and replaces only the program: data, profiles and PINs "
+			"stay where they are."_q;
 }
 
 // The line under the switch, the way the official client writes it: what the
@@ -767,9 +808,26 @@ void FillSending(not_null<Ui::VerticalLayout*> container) {
 			? u"Новая версия готова к установке"_q
 			: u"A new version is ready to install"_q;
 	case Update::Phase::Failed:
-		// Two different failures wear the same phase, and telling the user
-		// that checking went wrong when the check succeeded and the download
-		// did not would send them looking in the wrong place.
+		// Four different failures wear the same phase. Two of them have
+		// nothing to do with the connection, and sending the user to look at
+		// their network would be wrong in both - especially for the refused
+		// installer, which is the one case where they have to know that the
+		// client stopped an update on purpose.
+		switch (status.failure) {
+		case Update::Failure::Rejected:
+			return russian
+				? u"Обновление отклонено: установщик не прошёл проверку"_q
+				: u"Update rejected: the installer failed verification"_q;
+		case Update::Failure::RateLimited:
+			// Worded for both halves: the same answer comes from the API when
+			// too many checks were made and from the asset host when it
+			// refuses a download outright.
+			return russian
+				? u"GitHub временно ограничил обращения, попробуйте позже"_q
+				: u"GitHub is limiting requests for now, try again later"_q;
+		}
+		// Telling the user that checking went wrong when the check succeeded
+		// and the download did not would send them looking in the wrong place.
 		return status.release.url.isEmpty()
 			? (russian
 				? u"Не удалось проверить обновления"_q
@@ -936,17 +994,18 @@ QString SettingsSectionTitle() {
 // the contents stay hidden for everyone who never opened the section,
 // while an explicit "off" is a stored false and stays off.
 bool HideNotificationContentEnabled() {
-	// Off, and not offered. The desktop composes the text of a notification
-	// itself, from a message it already received over its own connection, and
-	// has no push service of any kind - so on this platform the text of a
-	// notification never reaches a third party and there is nothing here for
-	// hiding it to protect. What it did protect against, a person looking at
-	// the screen, is what the stock Name and Text checkboxes are for.
-	//
-	// The machinery below and its reader in notifications_manager are left in
-	// place: the account-level promise above is the one that matters here, and
-	// if this is ever wanted again it is one line.
-	return false;
+	// This used to return a hard-coded false, reasoning that the desktop
+	// composes the notification itself and no push service ever sees the
+	// text. The first half is true; the conclusion was wrong for Windows.
+	// The client does not draw the notification - it hands the title, the
+	// subtitle and the whole body to the system, and Windows copies all
+	// three into its own Action Center store under the user profile. That
+	// store is outside tdata, so it is outside the local key, outside the
+	// device binding and outside the emergency wipe, and it keeps them for
+	// days. The third party is the operating system.
+	return Core::App().settings().readPref<bool>(
+		kHideNotificationContentKey,
+		true);
 }
 
 void SetHideNotificationContentEnabled(bool enabled) {

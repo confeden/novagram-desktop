@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "novagram/nova_read_status.h"
 #include "ui/layers/show.h"
 #include "ui/text/text_utilities.h"
 
@@ -212,6 +213,23 @@ Stories::Stories(not_null<Session*> owner)
 				}
 			} else {
 				clearArchive(channel);
+			}
+		}, _lifetime);
+
+		// A story read that was held back for a hidden dialog is retried from
+		// here. The rules change when a dialog is finally decided and when one
+		// is revealed, and both fire this stream, so there is no timer to
+		// re-arm: the receipt simply stays pending until the answer arrives.
+		// Deliberately inside crl::on_main, like the subscription above - the
+		// session finishes building before anything asks it for its rules.
+		NovaGram::ReadStatusUpdates(
+			&session()
+		) | rpl::on_next([=] {
+			if (!_markReadPending.empty()) {
+				sendMarkAsReadRequests();
+			}
+			if (!_incrementViewsPending.empty()) {
+				sendIncrementViewsRequests();
 			}
 		}, _lifetime);
 	});
@@ -1431,7 +1449,33 @@ void Stories::sendMarkAsReadRequests() {
 		}
 		const auto j = _all.find(peerId);
 		if (j != end(_all)) {
-			sendMarkAsReadRequest(j->second.peer, j->second.readTill);
+			const auto author = j->second.peer;
+			if (NovaGram::ReadStatusWithheldFor(author)) {
+				// The author of a story is handed the names of everyone who
+				// looked at it, so this request says "I have read you" more
+				// plainly than a tick does, and it says it to the one person
+				// this dialog is hiding from. Held and not dropped: markAsRead
+				// has already moved the local position through bumpReadTill,
+				// exactly as the syncGuard of Histories::readInboxTill does, so
+				// dropping it would leave the stories read on this client and
+				// unread everywhere else for good. It stays in the pending set
+				// and goes out when the dialog is revealed; an undecided dialog
+				// waits in the same place, because a receipt that was not sent
+				// can still be sent (I2).
+				//
+				// The position behind it is not written down anywhere, unlike
+				// the held read position of a dialog. It cannot be: this class
+				// keeps nothing on disk at all - no local(), no readPref, no
+				// Storage - and _readTill is seeded at every start from
+				// stories.getAllReadPeerStories, that is from the server. So a
+				// reveal that comes after a restart sends the value the server
+				// already had, and whatever was read while the rule held stays
+				// unread for it. Losing the mark is the safe direction: it
+				// tells the author nothing they were not told before.
+				++i;
+				continue;
+			}
+			sendMarkAsReadRequest(author, j->second.readTill);
 		}
 		i = _markReadPending.erase(i);
 	}
@@ -1446,14 +1490,36 @@ void Stories::sendIncrementViewsRequests() {
 		QVector<MTPint> ids;
 	};
 	auto prepared = std::vector<Prepared>();
+	auto dropped = std::vector<PeerId>();
 	for (const auto &[peer, ids] : _incrementViewsPending) {
 		if (_incrementViewsRequests.contains(peer)) {
+			continue;
+		}
+		const auto author = _owner->peer(peer);
+		if (NovaGram::ReadStatusHiddenFor(author)) {
+			// This one is dropped, not held like the read above it. It counts
+			// a view of a story that has already expired, and nothing on this
+			// client hangs from it: a view that is never sent is simply a view
+			// that was never counted, while sending it after the dialog is
+			// revealed would put this account into the viewer list of a story
+			// nobody is watching any more - a receipt about a message can be
+			// late, a view cannot be.
+			dropped.push_back(peer);
+			continue;
+		} else if (NovaGram::ReadStatusPendingFor(author)) {
+			// Not decided yet, so it waits where it is: the update stream the
+			// constructor listens to brings it back here with the answer, and
+			// if the answer is Hidden it is dropped then (I2).
 			continue;
 		}
 		prepared.push_back({ .peer = peer });
 		for (const auto &id : ids) {
 			prepared.back().ids.push_back(MTP_int(id));
 		}
+	}
+	// After the loop above, which walks the same map.
+	for (const auto peerId : dropped) {
+		_incrementViewsPending.remove(peerId);
 	}
 
 	const auto api = &_owner->session().api();

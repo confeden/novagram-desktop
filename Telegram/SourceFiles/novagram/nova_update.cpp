@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "core/core_settings_proxy.h"
 #include "logs.h"
+#include "novagram/nova_authenticode.h"
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_doh.h"
@@ -20,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QCryptographicHash>
+#include <QtCore/QDateTime>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QJsonArray>
@@ -48,9 +50,29 @@ constexpr auto kReleasesUrl = "https://api.github.com"
 constexpr auto kEnabledKey = "novagram_update_check"_cs;
 constexpr auto kPeriod = crl::time(8 * 60 * 60 * 1000);
 
+// When the release host was last asked, and until when it asked not to be
+// asked again. Both are wall-clock milliseconds and both survive a restart -
+// which is the whole point of them, see Checker::start().
+constexpr auto kLastAttemptKey = "novagram_update_attempt"_cs;
+constexpr auto kRateLimitKey = "novagram_update_rate_limit"_cs;
+
 // Not zero: the first seconds after start are the busiest ones, and an update
 // check is the least urgent thing happening then.
 constexpr auto kFirstDelay = crl::time(30 * 1000);
+
+// The floor under "check now" in settings. That button had no cooldown at all,
+// so holding it down was a way of spending an hourly quota of sixty anonymous
+// requests in about a minute - after which the client could not check for
+// updates for the rest of the hour, which is the opposite of what pressing it
+// was meant to achieve.
+constexpr auto kMinManualInterval = crl::time(60 * 1000);
+
+// What to wait when the host refuses but says nothing useful about when it
+// will stop, and the most it may ask for however loudly it asks. The upper
+// bound matters: without it one broken or hostile header could switch update
+// checking off for years.
+constexpr auto kRateLimitFallback = crl::time(60 * 60 * 1000);
+constexpr auto kRateLimitMax = crl::time(24 * 60 * 60 * 1000);
 
 // A manifest is a few hundred bytes and an installer is tens of megabytes.
 // Both limits exist so that a wrong or hostile answer cannot fill the disk.
@@ -75,16 +97,144 @@ constexpr auto kDownloadTimeout = 20 * 1000;
 // not on retries of nothing.
 constexpr auto kMaxDownloadAttempts = 40;
 
+// Between two of those pieces. There used to be nothing here at all, and a
+// connection that delivered a kilobyte and dropped turned into forty requests
+// in as many milliseconds - which is how a client talks itself into being
+// refused by the host it is downloading from. It grows with the number of
+// consecutive breaks and stops growing at half a minute.
+constexpr auto kDownloadRetryStep = crl::time(1000);
+constexpr auto kDownloadRetryMax = crl::time(30 * 1000);
+
 [[nodiscard]] QString FolderPath() {
 	return cWorkingDir() + u"novagram_update/"_q;
 }
 
+// Both requests this module makes go out with the roots of nova_doh_roots.h
+// and nothing else, exactly as the resolver's own queries do.
+//
+// This is not about which host is being talked to - it is about which
+// authorities may vouch for it. A root that a corporate image or a piece of
+// malware added to the Windows store is not among them, so it cannot sit in
+// the middle of the one exchange in this client that ends with an executable
+// being run. The release host chains to an authority that is already on the
+// list; a provider that moves off it stops working and says so, which is the
+// intended failure and not a reason to widen the list quietly.
+void PinRoots(QNetworkRequest &request) {
+	request.setSslConfiguration(Doh::PinnedConfiguration());
+}
+
+// Qt may follow redirects here: the name was resolved by a proxy rather than
+// by us, so there is no system resolver to keep out of the way.
 void Prepare(QNetworkRequest &request, int timeout) {
+	PinRoots(request);
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::NoLessSafeRedirectPolicy);
 	request.setMaximumRedirectsAllowed(5);
 	request.setTransferTimeout(timeout);
+}
+
+// The address was resolved here, so the name only lives in SNI, in the
+// certificate check and in the Host header - and every redirect has to come
+// back through this module to be resolved again.
+void PrepareManual(
+		QNetworkRequest &request,
+		const QString &verifyName,
+		int timeout) {
+	PinRoots(request);
+	request.setPeerVerifyName(verifyName);
+	request.setRawHeader("Host", verifyName.toLatin1());
+	request.setAttribute(
+		QNetworkRequest::RedirectPolicyAttribute,
+		QNetworkRequest::ManualRedirectPolicy);
+	request.setTransferTimeout(timeout);
+}
+
+[[nodiscard]] qint64 ReadStamp(std::string_view key) {
+	const auto stored = Core::App().settings().readPref<QByteArray>(
+		key,
+		QByteArray());
+	if (stored.isEmpty()) {
+		return 0;
+	}
+	auto ok = false;
+	const auto value = stored.toLongLong(&ok);
+	return (ok && value > 0) ? value : 0;
+}
+
+void WriteStamp(std::string_view key, qint64 value) {
+	Core::App().settings().writePref<QByteArray>(
+		key,
+		QByteArray::number(value));
+}
+
+// How long ago the release host was last asked, across restarts. Negative
+// means "never, as far as this machine knows" - which also covers a clock that
+// has moved backwards since, because a stamp in the future says nothing about
+// how long ago anything happened.
+[[nodiscard]] crl::time SinceLastAttempt() {
+	const auto stamp = ReadStamp(kLastAttemptKey);
+	if (!stamp) {
+		return -1;
+	}
+	const auto now = QDateTime::currentMSecsSinceEpoch();
+	return (stamp > now) ? -1 : crl::time(now - stamp);
+}
+
+// Milliseconds still to wait before the host may be asked at all, zero when it
+// may. Unlike the interval above this one also stops a check asked for by
+// hand: the host did not say "not so often", it said "not until then".
+[[nodiscard]] crl::time RateLimitLeft() {
+	const auto until = ReadStamp(kRateLimitKey);
+	if (!until) {
+		return 0;
+	}
+	const auto now = QDateTime::currentMSecsSinceEpoch();
+	if (until <= now) {
+		return 0;
+	} else if (until - now > kRateLimitMax) {
+		// The clock moved backwards, or the value is nonsense. Either way the
+		// answer is not "wait a year".
+		return 0;
+	}
+	return crl::time(until - now);
+}
+
+// GitHub answers 403 or 429 when too much has been asked from one address, and
+// says in the headers when it will answer again. Believing that is both
+// politer and cheaper than guessing: guessing wrong means being refused for the
+// rest of the hour and finding out one request at a time.
+void RememberRateLimit(QNetworkReply *reply) {
+	const auto now = QDateTime::currentMSecsSinceEpoch();
+	auto until = qint64(0);
+
+	// An absolute unix time in seconds, and the one GitHub actually sets.
+	const auto reset = reply->rawHeader("x-ratelimit-reset").trimmed();
+	if (!reset.isEmpty()) {
+		auto ok = false;
+		const auto seconds = reset.toLongLong(&ok);
+		if (ok && seconds > 0) {
+			until = seconds * 1000;
+		}
+	}
+	// A number of seconds from now, which the secondary rate limit uses.
+	const auto after = reply->rawHeader("Retry-After").trimmed();
+	if (!after.isEmpty()) {
+		auto ok = false;
+		const auto seconds = after.toLongLong(&ok);
+		if (ok && seconds > 0) {
+			until = std::max(until, now + seconds * 1000);
+		}
+	}
+	if (until <= now) {
+		// Neither header made sense. A refusal without a time on it is still a
+		// refusal, so it costs the same as the usual one.
+		until = now + kRateLimitFallback;
+	}
+	until = std::min(until, now + kRateLimitMax);
+	LOG(("NovaGram update: not asking again for %1 s.").arg(
+		QString::number((until - now) / 1000)));
+	WriteStamp(kRateLimitKey, until);
 }
 
 class Checker final {
@@ -112,14 +262,22 @@ private:
 		Fn<void(QNetworkReply*)> done);
 	void applyManifest(const QByteArray &body);
 	void finishDownload(const QByteArray &body);
-	void fail();
-	void failCheck();
+	[[nodiscard]] bool verifyInstaller();
+	void dropInstaller();
+	void fail(Failure reason);
+	void failCheck(Failure reason);
 	void runInstaller();
 
 	rpl::variable<Status> _status;
 	QNetworkAccessManager _manager;
 	QPointer<QNetworkReply> _reply;
 	base::Timer _timer;
+
+	// The pause between two pieces of a download that keeps breaking. Separate
+	// from _timer on purpose: that one carries the eight hour cycle, and a
+	// download borrowing it would silently cancel the next check.
+	base::Timer _retry;
+
 	QString _installer;
 
 	// What earlier attempts of the current release managed to fetch. Kept so a
@@ -154,6 +312,7 @@ private:
 
 Checker::Checker() {
 	_timer.setCallback([=] { checkNow(); });
+	_retry.setCallback([=] { download(); });
 }
 
 Status Checker::current() const {
@@ -167,6 +326,9 @@ rpl::producer<Status> Checker::statusValue() const {
 void Checker::set(Phase phase) {
 	auto status = _status.current();
 	status.phase = phase;
+	// Any phase at all is news, and news replaces the reason the last attempt
+	// gave. A reason that outlived it would label the wrong thing.
+	status.failure = Failure::None;
 	_status = status;
 }
 
@@ -174,7 +336,16 @@ void Checker::start() {
 	if (Decoy::Active() || !CheckEnabled()) {
 		return;
 	}
-	_timer.callOnce(kFirstDelay);
+	// Nothing about the eight hour cycle used to survive the process, so
+	// restarting the client was a way of asking GitHub again thirty seconds
+	// later, however recently it had answered - and a machine that is switched
+	// on and off a few times an hour spent the whole anonymous quota on
+	// nothing. What is left of the interval is waited out here instead.
+	const auto since = SinceLastAttempt();
+	const auto rest = (since < 0 || since >= kPeriod)
+		? crl::time(0)
+		: (kPeriod - since);
+	_timer.callOnce(std::max(rest, kFirstDelay));
 }
 
 // The proxy the user chose for Telegram, whenever it is one a plain HTTPS
@@ -229,11 +400,7 @@ void Checker::getResolved(
 		// there is nothing for a resolver to do.
 		DEBUG_LOG(("NovaGram update: %1 is resolved by the proxy.").arg(host));
 		auto request = QNetworkRequest(url);
-		request.setAttribute(
-			QNetworkRequest::RedirectPolicyAttribute,
-			QNetworkRequest::NoLessSafeRedirectPolicy);
-		request.setMaximumRedirectsAllowed(5);
-		request.setTransferTimeout(timeout);
+		Prepare(request, timeout);
 		_manager.setProxy(proxy);
 		const auto reply = _manager.get(request);
 		_reply = reply;
@@ -257,13 +424,8 @@ void Checker::getResolved(
 		target.setHost(answer.values.front());
 		applyProxy(url);
 		auto request = QNetworkRequest(target);
-		request.setPeerVerifyName(host);
-		request.setRawHeader("Host", host.toLatin1());
+		PrepareManual(request, host, timeout);
 		request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-		request.setAttribute(
-			QNetworkRequest::RedirectPolicyAttribute,
-			QNetworkRequest::ManualRedirectPolicy);
-		request.setTransferTimeout(timeout);
 		const auto reply = _manager.get(request);
 		_reply = reply;
 		QObject::connect(reply, &QNetworkReply::finished, [=] {
@@ -282,6 +444,8 @@ void Checker::getResolved(
 
 void Checker::stop() {
 	_timer.cancel();
+	_retry.cancel();
+	_attempts = 0;
 	// The flag is raised only when there is a reply to abort, and it is the
 	// handler of that reply that lowers it again. Raising it unconditionally
 	// latched it for the rest of the session: with nothing in flight nobody
@@ -306,13 +470,16 @@ void Checker::stop() {
 // behind: the bar and the state line tell a download failure from a check
 // failure by whether a release is known, and a stale one would label the wrong
 // thing and offer a button that has nothing to fetch.
-void Checker::failCheck() {
+void Checker::failCheck(Failure reason) {
 	_status = Status();
-	fail();
+	fail(reason);
 }
 
-void Checker::fail() {
-	set(Phase::Failed);
+void Checker::fail(Failure reason) {
+	auto status = _status.current();
+	status.phase = Phase::Failed;
+	status.failure = reason;
+	_status = status;
 	if (!Decoy::Active() && CheckEnabled()) {
 		_timer.callOnce(kPeriod);
 	}
@@ -322,6 +489,37 @@ void Checker::checkNow() {
 	if (Decoy::Active() || !CheckEnabled() || _reply) {
 		return;
 	}
+	if (const auto left = RateLimitLeft()) {
+		// Not "later, maybe": the host named a time, and asking before it only
+		// makes the refusal last longer.
+		LOG(("NovaGram update: refused until %1 s from now, not asking."
+			).arg(QString::number(left / 1000)));
+		failCheck(Failure::RateLimited);
+		return;
+	}
+	const auto since = SinceLastAttempt();
+	if (since >= 0 && since < kMinManualInterval) {
+		// Nothing is reported here and that is deliberate: the last attempt
+		// finished less than a minute ago, so the line under the switch is
+		// already showing its answer, and replacing it with a complaint about
+		// pressing the button twice would hide the thing the user asked for.
+		LOG(("NovaGram update: asked again after %1 ms, too soon."
+			).arg(QString::number(since)));
+		// Whoever asked, the cycle has to survive being refused: without this a
+		// call that returns here and finds nothing armed would end automatic
+		// checking until the next launch.
+		if (!_timer.isActive() && !Decoy::Active() && CheckEnabled()) {
+			_timer.callOnce(kPeriod - since);
+		}
+		return;
+	}
+	// Written down before the answer and not after it, so that a check which
+	// fails, times out or never comes back still costs the same eight hours as
+	// one that succeeds. Otherwise a host that is blocked - which is the
+	// normal case in some of the places this fork is used - would be asked
+	// again on every launch for ever.
+	WriteStamp(kLastAttemptKey, QDateTime::currentMSecsSinceEpoch());
+
 	set(Phase::Checking);
 	LOG(("NovaGram update: asking %1.").arg(QString::fromLatin1(kReleasesUrl)));
 
@@ -332,13 +530,24 @@ void Checker::checkNow() {
 			_cancelling = false;
 			return;
 		} else if (!reply) {
-			failCheck();
+			failCheck(Failure::Network);
+			return;
+		}
+		const auto code = reply->attribute(
+			QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		if (code == 403 || code == 429) {
+			// Looked at before the error, because Qt reports both of these as
+			// errors and "check your connection" is the wrong thing to say
+			// about a host that answered perfectly well.
+			LOG(("NovaGram update: the release host answered %1.").arg(code));
+			RememberRateLimit(reply);
+			failCheck(Failure::RateLimited);
 			return;
 		} else if (reply->error() != QNetworkReply::NoError) {
 			LOG(("NovaGram update: check failed, %1 (%2).").arg(
 				reply->errorString(),
 				QString::number(int(reply->error()))));
-			failCheck();
+			failCheck(Failure::Network);
 			return;
 		}
 		applyManifest(reply->read(kMaxManifestSize));
@@ -360,7 +569,8 @@ void Checker::checkNow() {
 void Checker::applyManifest(const QByteArray &body) {
 	const auto document = QJsonDocument::fromJson(body);
 	if (!document.isObject()) {
-		failCheck();
+		LOG(("NovaGram update: the answer is not a release object."));
+		failCheck(Failure::Network);
 		return;
 	}
 	const auto object = document.object();
@@ -388,16 +598,21 @@ void Checker::applyManifest(const QByteArray &body) {
 		break;
 	}
 	if (release.version.isEmpty()) {
-		failCheck();
+		LOG(("NovaGram update: the answer names no version."));
+		failCheck(Failure::Network);
 		return;
 	} else if (!release.releaseUrl.isEmpty()
 		&& !release.releaseUrl.startsWith(ProjectUrl())) {
 		// The answer may only ever point back into the project it belongs to.
-		failCheck();
+		LOG(("NovaGram update: the answer points at %1, refusing."
+			).arg(release.releaseUrl));
+		failCheck(Failure::Network);
 		return;
 	} else if (!release.url.isEmpty()
 		&& !release.url.startsWith(ProjectUrl() + u"/releases/download/"_q)) {
-		failCheck();
+		LOG(("NovaGram update: the asset is at %1, refusing."
+			).arg(release.url));
+		failCheck(Failure::Network);
 		return;
 	}
 
@@ -427,9 +642,11 @@ void Checker::download() {
 	} else if (release.sha256.size() != 64) {
 		// An installer that cannot be checked is not installed. Publishing a
 		// release without the digest is a mistake worth failing loudly on.
-		fail();
+		LOG(("NovaGram update: the release carries no usable digest."));
+		fail(Failure::Rejected);
 		return;
 	}
+	_retry.cancel();
 	_cancelling = false;
 	if (_partialVersion != release.version) {
 		_partial.clear();
@@ -442,7 +659,13 @@ void Checker::download() {
 			: u" from byte "_q + QString::number(_partial.size()))));
 	auto status = _status.current();
 	status.phase = Phase::Downloading;
-	status.progress = 0;
+	status.failure = Failure::None;
+	if (_partial.isEmpty()) {
+		// A continuation keeps the percentage it had reached. With a pause
+		// before it the bar would otherwise sit at zero for half a minute and
+		// then jump back to seventy, which reads as a restart and is not one.
+		status.progress = 0;
+	}
 	_status = status;
 
 	const auto url = QUrl(release.url);
@@ -459,7 +682,7 @@ void Checker::download() {
 		if (answer.values.empty()) {
 			LOG(("NovaGram update: could not resolve %1 over secure DNS.").arg(
 				host));
-			fail();
+			fail(Failure::Network);
 			return;
 		}
 		auto target = url;
@@ -476,7 +699,7 @@ void Checker::download() {
 void Checker::startDownload(QUrl target, QString verifyName, int hop) {
 	if (hop > 5) {
 		LOG(("NovaGram update: too many redirects while downloading."));
-		fail();
+		fail(Failure::Network);
 		return;
 	}
 	applyProxy(target);
@@ -484,12 +707,7 @@ void Checker::startDownload(QUrl target, QString verifyName, int hop) {
 	if (verifyName.isEmpty()) {
 		Prepare(request, kDownloadTimeout);
 	} else {
-		request.setPeerVerifyName(verifyName);
-		request.setRawHeader("Host", verifyName.toLatin1());
-		request.setAttribute(
-			QNetworkRequest::RedirectPolicyAttribute,
-			QNetworkRequest::ManualRedirectPolicy);
-		request.setTransferTimeout(kDownloadTimeout);
+		PrepareManual(request, verifyName, kDownloadTimeout);
 	}
 	// Ask for the rest of what an earlier attempt managed to fetch. The asset
 	// host answers 206 and sends only the tail; a host that cannot do that
@@ -555,7 +773,7 @@ void Checker::startDownload(QUrl target, QString verifyName, int hop) {
 			const auto next = target.resolved(redirect);
 			if (next.scheme() != u"https"_q) {
 				LOG(("NovaGram update: refusing a non-https hop."));
-				fail();
+				fail(Failure::Network);
 				return;
 			}
 			const auto nextHost = next.host();
@@ -563,7 +781,7 @@ void Checker::startDownload(QUrl target, QString verifyName, int hop) {
 					Doh::Answer answer) {
 				if (answer.values.empty()) {
 					LOG(("NovaGram update: could not resolve %1.").arg(nextHost));
-					fail();
+					fail(Failure::Network);
 					return;
 				}
 				auto resolved = next;
@@ -591,22 +809,35 @@ void Checker::startDownload(QUrl target, QString verifyName, int hop) {
 			return;
 		}
 		if (reply->error() != QNetworkReply::NoError) {
+			const auto code = reply->attribute(
+				QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			if (code == 403 || code == 429) {
+				// The asset host refusing outright is not a broken transfer,
+				// and continuing forty times would only convince it further.
+				LOG(("NovaGram update: the download was refused with %1."
+					).arg(code));
+				_attempts = 0;
+				fail(Failure::RateLimited);
+				return;
+			}
 			const auto gained = (_partial.size() > _resumeBase);
 			LOG(("NovaGram update: download stopped at %1 bytes, %2 (%3)%4.").arg(
 				QString::number(_partial.size()),
 				reply->errorString(),
 				QString::number(int(reply->error())),
 				(gained ? u", continuing"_q : QString())));
-			// An attempt that moved forward is worth repeating at once: on a
-			// connection that breaks every few megabytes the file only ever
-			// arrives in pieces, and asking the user to press the button
-			// twenty times is not offering the feature at all. An attempt that
-			// gained nothing is a real failure and is reported as one.
+			// An attempt that moved forward is worth repeating: on a connection
+			// that breaks every few megabytes the file only ever arrives in
+			// pieces, and asking the user to press the button twenty times is
+			// not offering the feature at all. An attempt that gained nothing
+			// is a real failure and is reported as one.
 			if (gained && (++_attempts < kMaxDownloadAttempts)) {
-				download();
+				_retry.callOnce(std::min(
+					kDownloadRetryStep * _attempts,
+					kDownloadRetryMax));
 			} else {
 				_attempts = 0;
-				fail();
+				fail(Failure::Network);
 			}
 			return;
 		}
@@ -616,11 +847,24 @@ void Checker::startDownload(QUrl target, QString verifyName, int hop) {
 }
 
 void Checker::cancel() {
-	if (!_reply || _status.current().phase != Phase::Downloading) {
+	if (_status.current().phase != Phase::Downloading) {
 		return;
 	}
-	_cancelling = true;
-	_reply->abort();
+	// A continuation may be waiting on the backoff rather than on the wire, and
+	// pressing "stop" while nothing is in flight has to stop that too -
+	// otherwise the button appeared to work and the download resumed by itself
+	// a few seconds later.
+	_retry.cancel();
+	if (_reply) {
+		_cancelling = true;
+		_reply->abort();
+		return;
+	}
+	_attempts = 0;
+	auto status = _status.current();
+	status.phase = Phase::Found;
+	status.progress = 0;
+	_status = status;
 }
 
 void Checker::finishDownload(const QByteArray &body) {
@@ -636,7 +880,7 @@ void Checker::finishDownload(const QByteArray &body) {
 		LOG(("NovaGram update: digest mismatch on %1 bytes, starting over."
 			).arg(QString::number(body.size())));
 		_partial.clear();
-		fail();
+		fail(Failure::Rejected);
 		return;
 	}
 	QDir().mkpath(FolderPath());
@@ -658,13 +902,51 @@ void Checker::finishDownload(const QByteArray &body) {
 	if (!file.open(QIODevice::WriteOnly)
 		|| file.write(body) != body.size()
 		|| !file.commit()) {
-		fail();
+		fail(Failure::Network);
 		return;
 	}
 	_installer = path;
+	if (!verifyInstaller()) {
+		return;
+	}
 	_partial.clear();
 	_partialVersion = QString();
 	set(Phase::Ready);
+}
+
+// Everything the staged file is worth, in one place.
+//
+// The digest checked above proves only that the bytes are the bytes the same
+// JSON answer described - one attacker writes both, so it is a check against
+// a broken transfer and against nothing else. This is the check that has to
+// hold when the release host, the connection and the answer are all somebody
+// else's: the file must carry an Authenticode signature made by one specific
+// certificate, and no other file may be executed, whatever it claims to be.
+bool Checker::verifyInstaller() {
+	const auto verdict = Authenticode::Verify(_installer);
+	if (verdict == Authenticode::Verdict::Ok) {
+		return true;
+	}
+	LOG(("NovaGram update: refusing to run %1 - %2.").arg(
+		_installer,
+		Authenticode::VerdictName(verdict)));
+	dropInstaller();
+	fail(Failure::Rejected);
+	return false;
+}
+
+// Nothing of a refused update is kept: not the file, not the half of it that
+// an earlier attempt held, and not the promise that something is ready. A
+// staged installer left behind would be offered again by the next press of the
+// button without ever being fetched.
+void Checker::dropInstaller() {
+	_installOnQuit = false;
+	if (!_installer.isEmpty()) {
+		QFile::remove(_installer);
+		_installer = QString();
+	}
+	_partial.clear();
+	_partialVersion = QString();
 }
 
 void Checker::runInstaller() {
@@ -672,6 +954,15 @@ void Checker::runInstaller() {
 		return;
 	}
 	_installOnQuit = false;
+	// Checked once more, here, a moment before the file is executed - and not
+	// only when it was downloaded. Between those two moments it sits in a
+	// folder that every process running as this user may write to, and Quit()
+	// is allowed to take its time: an export or an upload can hold the client
+	// open for minutes after the button was pressed. That window is the point
+	// of this call.
+	if (!verifyInstaller()) {
+		return;
+	}
 	// Silent, because the user already agreed in the application, and with the
 	// finish task left enabled so that the installer starts the new build.
 	QProcess::startDetached(_installer, {
@@ -683,6 +974,10 @@ void Checker::runInstaller() {
 
 void Checker::installAndRestart() {
 	if (_installer.isEmpty() || !QFile::exists(_installer)) {
+		return;
+	} else if (!verifyInstaller()) {
+		// The one refusal the user can still be shown: after this the client
+		// is on its way out and there is no window left to say it in.
 		return;
 	}
 	// Order matters and it used to be the other way round. Core::Quit() is
@@ -718,6 +1013,11 @@ void SetCheckEnabled(bool enabled) {
 	Core::App().settings().writePref<bool>(kEnabledKey, enabled);
 	Core::App().saveSettingsDelayed();
 	if (enabled) {
+		// start() first, and then the check. checkNow() is allowed to refuse -
+		// the host was asked a minute ago, or asked us not to ask again yet -
+		// and something has to arm the cycle, or switching the setting off and
+		// on again would quietly end automatic checking until the next launch.
+		Instance().start();
 		Instance().checkNow();
 	} else {
 		Instance().stop();
@@ -792,7 +1092,12 @@ QString BarText(const Status &status) {
 			? u"Установить и перезапустить"_q
 			: u"Install and restart"_q;
 	case Phase::Failed:
-		return russian ? u"Попробовать снова"_q : u"Try again"_q;
+		// A refused installer is not a hiccup to try again, and the bar is the
+		// only place some users ever look. It says what happened; the settings
+		// section says why.
+		return (status.failure == Failure::Rejected)
+			? (russian ? u"Обновление отклонено"_q : u"Update rejected"_q)
+			: (russian ? u"Попробовать снова"_q : u"Try again"_q);
 	}
 	return russian ? u"Обновить NovaGram"_q : u"Update NovaGram"_q;
 }

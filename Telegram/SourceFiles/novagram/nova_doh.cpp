@@ -158,48 +158,6 @@ constexpr auto kMinLiveInterval = crl::time(60 * 1000);
 	return result;
 }
 
-// The TLS configuration used for the four built-in endpoints: the roots in
-// nova_doh_roots.h and nothing else.
-//
-// setCaCertificates() is doing two things at once here, and the second is the
-// one that matters. Besides replacing the list, it turns off Qt's on-demand
-// loading of roots from the Windows store - and it is that loading which would
-// otherwise accept a certificate authority someone added to the machine. With
-// it off, a Windows-supplied root that is not in our list is refused, so an
-// intercepting proxy ends the connection with a verification error instead of
-// quietly answering in the resolver's place.
-//
-// If the compiled-in list somehow fails to parse there is nothing to fall back
-// on that is both safe and useful, so it falls back to the default
-// configuration and says so in the log. That trade is deliberate: an empty list
-// would take the resolver down completely, and with it the proxy by name, the
-// emergency config and updates - while the condition can only ever be a defect
-// in this file, never anything an attacker arranges.
-[[nodiscard]] const QSslConfiguration &PinnedConfiguration() {
-	static const auto result = [] {
-		auto config = QSslConfiguration::defaultConfiguration();
-		const auto parsed = QSslCertificate::fromData(
-			QByteArray(kPinnedRoots),
-			QSsl::Pem);
-		auto roots = QList<QSslCertificate>();
-		for (const auto &certificate : parsed) {
-			if (!certificate.isNull()) {
-				roots.push_back(certificate);
-			}
-		}
-		if (roots.isEmpty()) {
-			LOG(("NovaGram DoH Error: pinned roots did not parse, "
-				"falling back to the system store."));
-			return config;
-		}
-		LOG(("NovaGram DoH: pinned %1 roots for the built-in endpoints."
-			).arg(roots.size()));
-		config.setCaCertificates(roots);
-		return config;
-	}();
-	return result;
-}
-
 [[nodiscard]] QString UrlFor(const Endpoint &endpoint, const QString &address) {
 	const auto host = address.contains(':')
 		? ('[' + address + ']')
@@ -888,6 +846,48 @@ QNetworkProxy ProxyFor(const QUrl &url) {
 	return system.isEmpty()
 		? QNetworkProxy(QNetworkProxy::NoProxy)
 		: system.front();
+}
+
+// The TLS configuration used for the four built-in endpoints and for the
+// update check: the roots in nova_doh_roots.h and nothing else.
+//
+// setCaCertificates() is doing two things at once here, and the second is the
+// one that matters. Besides replacing the list, it turns off Qt's on-demand
+// loading of roots from the Windows store - and it is that loading which would
+// otherwise accept a certificate authority someone added to the machine. With
+// it off, a Windows-supplied root that is not in our list is refused, so an
+// intercepting proxy ends the connection with a verification error instead of
+// quietly answering in the resolver's place.
+//
+// If the compiled-in list somehow fails to parse there is nothing to fall back
+// on that is both safe and useful, so it falls back to the default
+// configuration and says so in the log. That trade is deliberate: an empty list
+// would take the resolver down completely, and with it the proxy by name, the
+// emergency config and updates - while the condition can only ever be a defect
+// in this file, never anything an attacker arranges.
+const QSslConfiguration &PinnedConfiguration() {
+	static const auto result = [] {
+		auto config = QSslConfiguration::defaultConfiguration();
+		const auto parsed = QSslCertificate::fromData(
+			QByteArray(kPinnedRoots),
+			QSsl::Pem);
+		auto roots = QList<QSslCertificate>();
+		for (const auto &certificate : parsed) {
+			if (!certificate.isNull()) {
+				roots.push_back(certificate);
+			}
+		}
+		if (roots.isEmpty()) {
+			LOG(("NovaGram DoH Error: pinned roots did not parse, "
+				"falling back to the system store."));
+			return config;
+		}
+		LOG(("NovaGram DoH: pinned %1 roots for the built-in endpoints "
+			"and for the update check.").arg(roots.size()));
+		config.setCaCertificates(roots);
+		return config;
+	}();
+	return result;
 }
 
 void Resolve(

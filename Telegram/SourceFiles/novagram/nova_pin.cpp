@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings.h"
 #include "storage/details/storage_file_utilities.h"
 
+#include <QtCore/QBuffer>
 #include <QtCore/QDataStream>
 #include <QtCore/QDateTime>
 #include <QtCore/QDir>
@@ -37,9 +38,19 @@ namespace NovaGram {
 namespace {
 
 constexpr auto kMagic = quint32(0x4E56504E);
-constexpr auto kVersion = qint32(4);
+// Version 5 moved the whole body inside the device seal. Up to version 4 the
+// salt, the verifier and the sealed identity sat in the open next to each
+// other, and a pin is worth about twenty bits: a stolen tdata folder gave up
+// the account's real name and number for a few GPU-hours. Older versions are
+// still read, once, and rewritten in the new format.
+constexpr auto kVersion = qint32(5);
 constexpr auto kSaltSize = 32;
-constexpr auto kIterations = 200000;
+// Android's floor is 600k (NovaPinKdf.ITERATIONS) and this is the platform
+// where the verifier was the exposed one, so the weaker parameter was on the
+// wrong side. Files written earlier keep their own count - it is stored beside
+// the verifier - and are not re-derived, because that needs the pin.
+constexpr auto kIterations = 600000;
+constexpr auto kLegacyIterations = 200000;
 constexpr auto kFailuresBeforeDelay = 3;
 constexpr auto kDelayStep = crl::time(5 * 60 * 1000);
 constexpr auto kMaxDelay = crl::time(24 * 60 * 60 * 1000);
@@ -57,7 +68,19 @@ struct State {
 	QByteArray identityEncrypted;
 	QByteArray identityPublicKey;
 	QByteArray identityEphemeral;
+	// The file was there and this machine could not open it. Never written
+	// over: the rightful machine still opens it, and nothing here wipes
+	// anything by itself (D13).
+	bool unreadable = false;
+	// The file was not there while the device store says a pin is armed on
+	// this installation. Someone removed it.
+	bool tampered = false;
 };
+
+// Detected once and remembered for the run. The state file is rebuilt the
+// moment the deletion is found, so a second read would see an ordinary file
+// again and the person in front of the unlock screen would never be told.
+bool GlobalTampered/* = false*/;
 
 [[nodiscard]] QString BasePath() {
 	return cWorkingDir() + u"tdata/"_q;
@@ -67,10 +90,140 @@ struct State {
 	return BasePath() + u"novagram_pin"_q;
 }
 
+void WriteState(const State &state);
+[[nodiscard]] crl::time DelayForAttempts(int failedAttempts);
+
+// The derivation cost that produced this file's verifier, and with it the
+// public half of the identity key pair: SetEmergencyPin() fixes both in the
+// same call, so one stored number governs both. A raised constant must never
+// be applied to an older file - the verifier would stop matching and the
+// snapshot would stop opening, with nothing to say why.
+[[nodiscard]] int StoredIterations(const State &state) {
+	return (state.emergencyIterations > 0)
+		? state.emergencyIterations
+		: kLegacyIterations;
+}
+
+// Everything except the magic and the version number. Up to version 4 these
+// fields sat directly in the file; from version 5 they are one blob that goes
+// through the device seal.
+[[nodiscard]] bool ReadBody(QDataStream &stream, qint32 version, State &to) {
+	auto enabled = qint32(0);
+	stream >> enabled
+		>> to.emergencySalt
+		>> to.emergencyVerifier
+		>> to.emergencyIterations
+		>> to.failedAttempts
+		>> to.lockoutStartedMs
+		>> to.lockoutDeadlineMs;
+	if (stream.status() != QDataStream::Ok) {
+		return false;
+	}
+	if (version >= 2) {
+		auto keypad = qint32(0);
+		stream >> keypad;
+		if (stream.status() != QDataStream::Ok) {
+			return false;
+		}
+		to.shuffledKeypad = (keypad != 0);
+	}
+	if (version >= 3) {
+		stream >> to.identitySalt >> to.identityEncrypted;
+		if (stream.status() != QDataStream::Ok) {
+			return false;
+		}
+	}
+	if (version >= 4) {
+		stream >> to.identityPublicKey >> to.identityEphemeral;
+		if (stream.status() != QDataStream::Ok) {
+			return false;
+		}
+	}
+	to.pinModeEnabled = (enabled != 0);
+	if (to.failedAttempts < 0) {
+		to.failedAttempts = 0;
+	}
+	if (to.lockoutDeadlineMs < to.lockoutStartedMs) {
+		to.lockoutDeadlineMs = to.lockoutStartedMs;
+	}
+	return true;
+}
+
+[[nodiscard]] QByteArray WriteBody(const State &state) {
+	auto result = QByteArray();
+	auto buffer = QBuffer(&result);
+	if (!buffer.open(QIODevice::WriteOnly)) {
+		return QByteArray();
+	}
+	auto stream = QDataStream(&buffer);
+	stream.setVersion(QDataStream::Qt_5_15);
+	stream << qint32(state.pinModeEnabled ? 1 : 0)
+		<< state.emergencySalt
+		<< state.emergencyVerifier
+		<< state.emergencyIterations
+		<< state.failedAttempts
+		<< state.lockoutStartedMs
+		<< state.lockoutDeadlineMs
+		<< qint32(state.shuffledKeypad ? 1 : 0)
+		<< state.identitySalt
+		<< state.identityEncrypted
+		<< state.identityPublicKey
+		<< state.identityEphemeral;
+	return (stream.status() == QDataStream::Ok) ? result : QByteArray();
+}
+
+// The state file existed and was understood: bring the device-bound flag up to
+// date, and carry a tampering already found in this run into the answer - the
+// file was put back the moment it was found missing, so nothing on the disk
+// records it any more. This is also the migration path for installations whose
+// binding file predates the flag: one small write, once, then it agrees.
+void FinishRead(State &state) {
+	DeviceLock::SetPinArmed(state.pinModeEnabled);
+	state.tampered = GlobalTampered;
+}
+
 [[nodiscard]] State ReadState() {
 	auto result = State();
 	auto file = QFile(StatePath());
+	const auto exists = file.exists();
 	if (!file.open(QIODevice::ReadOnly)) {
+		if (exists) {
+			// There, and this process cannot read it: a lock, or permissions.
+			// A different thing from a deletion, and nothing may be written
+			// over it - so it fails closed and stays untouched.
+			return State{ .pinModeEnabled = true, .unreadable = true };
+		}
+		// Deleting this one file used to remove the emergency pin, the
+		// persistent lockout counter and the pin mode in a single gesture, and
+		// left no trace at all: a missing file simply read as "no pin here".
+		// The device store remembers instead, so the two cases are told apart
+		// explicitly - a first run has never armed anything, a deletion has.
+		if (DeviceLock::PinArmed()) {
+			if (!GlobalTampered) {
+				GlobalTampered = true;
+				LOG(("NovaGram pin: the state file is gone while the device "
+					"store says a pin is armed here - tampering"));
+			}
+			// The attempts that were deleted count as spent. Not a full
+			// lockout: an honest user whose file was lost to a disk fault must
+			// not be shut out, and one delay step is already enough to make
+			// deleting the file over and over cost something.
+			const auto now = QDateTime::currentMSecsSinceEpoch();
+			result.pinModeEnabled = true;
+			result.failedAttempts = kFailuresBeforeDelay;
+			result.lockoutStartedMs = now;
+			result.lockoutDeadlineMs = now
+				+ DelayForAttempts(result.failedAttempts);
+			result.tampered = true;
+			// Put back on the disk at once, so the delay runs down instead of
+			// being recomputed - and slid forward - by every later read.
+			static auto restored = false;
+			if (!restored) {
+				restored = true;
+				WriteState(result);
+			}
+			return result;
+		}
 		return result;
 	}
 	auto stream = QDataStream(&file);
@@ -86,75 +239,95 @@ struct State {
 		// downgrade NovaGram to the plain upstream passcode behaviour, so
 		// the pin mode stays on while the emergency verifier is dropped.
 		// The local data itself is still protected by the passcode key.
-		return State{ .pinModeEnabled = true };
+		return State{ .pinModeEnabled = true, .unreadable = true };
 	}
-	auto enabled = qint32(0);
-	stream >> enabled
-		>> result.emergencySalt
-		>> result.emergencyVerifier
-		>> result.emergencyIterations
-		>> result.failedAttempts
-		>> result.lockoutStartedMs
-		>> result.lockoutDeadlineMs;
+	if (version < 5) {
+		if (!ReadBody(stream, version, result)) {
+			return State{ .pinModeEnabled = true, .unreadable = true };
+		}
+		FinishRead(result);
+		// Written in the open by an older build. Rewriting it sealed is what
+		// takes the verifier and the sealed identity out of reach of an
+		// offline attack on the pin, and nothing else here is guaranteed to
+		// write at all - a profile whose pin is never touched again would keep
+		// the old file for ever. Once per process, because a seal that is
+		// being refused would otherwise be retried on every single read.
+		static auto migrated = false;
+		if (!migrated) {
+			migrated = true;
+			WriteState(result);
+		}
+		return result;
+	}
+	auto stored = QByteArray();
+	stream >> stored;
 	if (stream.status() != QDataStream::Ok) {
-		return State{ .pinModeEnabled = true };
+		return State{ .pinModeEnabled = true, .unreadable = true };
 	}
-	if (version >= 2) {
-		auto keypad = qint32(0);
-		stream >> keypad;
-		if (stream.status() != QDataStream::Ok) {
-			return State{ .pinModeEnabled = true };
-		}
-		result.shuffledKeypad = (keypad != 0);
+	auto body = QByteArray();
+	const auto opened = DeviceLock::OpenPayload(
+		DeviceLock::SealedFile::Pin,
+		stored,
+		body);
+	if (opened == DeviceLock::OpenResult::Foreign) {
+		// Sealed to another machine. Fails closed - the pin mode stays on -
+		// and unreadable stops anything from writing over a file the rightful
+		// machine can still open.
+		LOG(("NovaGram pin: the state file belongs to another machine"));
+		return State{ .pinModeEnabled = true, .unreadable = true };
 	}
-	if (version >= 3) {
-		stream >> result.identitySalt >> result.identityEncrypted;
-		if (stream.status() != QDataStream::Ok) {
-			return State{ .pinModeEnabled = true };
-		}
+	auto inner = QBuffer();
+	inner.setData(body);
+	if (!inner.open(QIODevice::ReadOnly)) {
+		return State{ .pinModeEnabled = true, .unreadable = true };
 	}
-	if (version >= 4) {
-		stream >> result.identityPublicKey >> result.identityEphemeral;
-		if (stream.status() != QDataStream::Ok) {
-			return State{ .pinModeEnabled = true };
-		}
+	auto bodyStream = QDataStream(&inner);
+	bodyStream.setVersion(QDataStream::Qt_5_15);
+	if (!ReadBody(bodyStream, version, result)) {
+		return State{ .pinModeEnabled = true, .unreadable = true };
 	}
-	result.pinModeEnabled = (enabled != 0);
-	if (result.failedAttempts < 0) {
-		result.failedAttempts = 0;
-	}
-	if (result.lockoutDeadlineMs < result.lockoutStartedMs) {
-		result.lockoutDeadlineMs = result.lockoutStartedMs;
-	}
+	FinishRead(result);
 	return result;
 }
 
 void WriteState(const State &state) {
+	if (state.unreadable) {
+		// Refusing rather than replacing: what is on the disk is somebody's
+		// working pin file, and this machine only failed to open it.
+		return;
+	}
+	const auto body = WriteBody(state);
+	if (body.isEmpty()) {
+		return;
+	}
+	const auto stored = DeviceLock::SealPayload(
+		DeviceLock::SealedFile::Pin,
+		body);
+	if (stored.isEmpty()) {
+		// A binding exists and sealing failed. Writing the body in the clear
+		// instead would hand out the verifier and the sealed identity - the
+		// very thing the seal was added for - so the previous file stays.
+		LOG(("NovaGram pin: the state file was not written, "
+			"the device seal was refused"));
+		return;
+	}
 	auto file = QSaveFile(StatePath());
 	if (!file.open(QIODevice::WriteOnly)) {
 		return;
 	}
 	auto stream = QDataStream(&file);
 	stream.setVersion(QDataStream::Qt_5_15);
-	stream << kMagic
-		<< kVersion
-		<< qint32(state.pinModeEnabled ? 1 : 0)
-		<< state.emergencySalt
-		<< state.emergencyVerifier
-		<< state.emergencyIterations
-		<< state.failedAttempts
-		<< state.lockoutStartedMs
-		<< state.lockoutDeadlineMs
-		<< qint32(state.shuffledKeypad ? 1 : 0)
-		<< state.identitySalt
-		<< state.identityEncrypted
-		<< state.identityPublicKey
-		<< state.identityEphemeral;
+	stream << kMagic << kVersion << stored;
 	if (stream.status() != QDataStream::Ok) {
 		file.cancelWriting();
 		return;
 	}
-	file.commit();
+	if (file.commit()) {
+		// The device-bound flag follows every write, so the emergency wipe -
+		// which writes an empty state and then removes the file - leaves the
+		// decoy with nothing to report as tampering.
+		DeviceLock::SetPinArmed(state.pinModeEnabled);
+	}
 }
 
 [[nodiscard]] QByteArray ComputeVerifier(
@@ -262,11 +435,80 @@ bool SealIdentity(
 	return (diff == 0);
 }
 
+// Left alone. Always empty by construction: tdata/tdummy exists so that the
+// Windows file dialog can be opened against a folder with no files in it
+// (platform/win/file_utilities_win.cpp), nothing is ever written into it, and
+// its path is cached in memory for the run - so removing it would take away
+// nothing and break the next file dialog.
 [[nodiscard]] bool KeptOnWipe(const QString &name) {
-	// Both are scratch directories that the running application recreates on
-	// demand and that never hold account data, so removing them would only
-	// race with the writes that happen right after the wipe.
-	return (name == u"temp"_q) || (name == u"tdummy"_q);
+	return (name == u"tdummy"_q);
+}
+
+// Emptied, but the directory itself stays. tdata/temp is not the scratch
+// space the old rule took it for: notification avatars of the user's contacts
+// are written there as plain PNG and are only removed on a timeout or on a
+// graceful exit (window/notifications_utilities.cpp), and a calendar event
+// built from a message is written there as .ics text. Both are exactly what
+// the wipe exists to destroy.
+//
+// The directory has to survive because there are writers that do not create
+// it - Tray::QuitJumpListIconPath(), which the wipe itself reaches through
+// refreshCustomJumpList(), simply fails to write its icon if the folder is
+// gone. There is no race to speak of: the wipe runs on the main thread on a
+// locked cold start, no session exists to write an avatar, and a file some
+// other process is holding open is refused here exactly as anywhere else in
+// this sweep.
+[[nodiscard]] bool EmptiedOnWipe(const QString &name) {
+	return (name == u"temp"_q);
+}
+
+[[nodiscard]] QDir::Filters WipeFilters() {
+	return QDir::Files
+		| QDir::Dirs
+		| QDir::NoDotAndDotDot
+		| QDir::Hidden
+		| QDir::System;
+}
+
+void WipeInside(const QDir &dir) {
+	for (const auto &entry : dir.entryInfoList(WipeFilters())) {
+		if (entry.isDir()) {
+			QDir(entry.absoluteFilePath()).removeRecursively();
+		} else {
+			QFile::remove(entry.absoluteFilePath());
+		}
+	}
+}
+
+// The logs sit beside tdata, not inside it, so the sweep does not reach them -
+// and log.txt is written by every build, not only with debug logging on. What
+// accumulated in it before the wipe is the destroyed account's own activity.
+//
+// Truncated when it cannot be removed: this process holds log.txt open and
+// Windows refuses to delete an open file, while a second handle may still
+// shorten it to nothing. The still-open append handle keeps its old offset, so
+// what the decoy writes afterwards lands past a run of zero bytes - ugly, and
+// still the whole point, because the text that was there is gone.
+void WipeLogs() {
+	const auto drop = [](const QString &path) {
+		auto file = QFile(path);
+		if (!file.exists() || file.remove()) {
+			return;
+		} else if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+			file.close();
+		}
+	};
+	const auto working = QDir(cWorkingDir());
+	for (const auto &entry : working.entryInfoList(
+			QStringList() << u"log.txt"_q << u"log_start*.txt"_q,
+			QDir::Files | QDir::Hidden | QDir::System)) {
+		drop(entry.absoluteFilePath());
+	}
+	const auto debug = QDir(cWorkingDir() + u"DebugLogs"_q);
+	for (const auto &entry : debug.entryInfoList(
+			QDir::Files | QDir::Hidden | QDir::System)) {
+		drop(entry.absoluteFilePath());
+	}
 }
 
 [[nodiscard]] crl::time DelayForAttempts(int failedAttempts) {
@@ -309,15 +551,13 @@ bool SealIdentity(
 
 void WipeLocalData() {
 	const auto dir = QDir(BasePath());
-	const auto entries = dir.entryInfoList(
-		QDir::Files
-		| QDir::Dirs
-		| QDir::NoDotAndDotDot
-		| QDir::Hidden
-		| QDir::System);
+	const auto entries = dir.entryInfoList(WipeFilters());
 	for (const auto &entry : entries) {
-		if (KeptOnWipe(entry.fileName())) {
+		const auto name = entry.fileName();
+		if (KeptOnWipe(name)) {
 			continue;
+		} else if (entry.isDir() && EmptiedOnWipe(name)) {
+			WipeInside(QDir(entry.absoluteFilePath()));
 		} else if (entry.isDir()) {
 			QDir(entry.absoluteFilePath()).removeRecursively();
 		} else {
@@ -340,6 +580,23 @@ bool ValidPin(const QString &pin) {
 
 bool PinModeEnabled() {
 	return ReadState().pinModeEnabled;
+}
+
+bool PinStateTampered() {
+	return ReadState().tampered;
+}
+
+void RewriteState() {
+	if (!QFile::exists(StatePath())) {
+		// Nothing to move between formats, and creating a state file here
+		// would invent a pin configuration that the owner never asked for.
+		return;
+	}
+	const auto state = ReadState();
+	if (state.unreadable) {
+		return;
+	}
+	WriteState(state);
 }
 
 bool HasEmergencyPin() {
@@ -403,7 +660,7 @@ void SetEmergencyPin(const QString &pin) {
 	auto identitySalt = QByteArray(kSaltSize, Qt::Uninitialized);
 	base::RandomFill(identitySalt.data(), identitySalt.size());
 	state.identitySalt = identitySalt;
-	state.identityPublicKey = Seal::PublicKey(pin, identitySalt);
+	state.identityPublicKey = Seal::PublicKey(pin, identitySalt, kIterations);
 	state.identityEphemeral = QByteArray();
 	state.identityEncrypted = QByteArray();
 	SealIdentity(state, CurrentIdentity());
@@ -441,7 +698,8 @@ EmergencyIdentity ReadEmergencyIdentity(const QString &pin) {
 		: KeyFromMaterial(Seal::Open(
 			pin,
 			state.identitySalt,
-			state.identityEphemeral));
+			state.identityEphemeral,
+			StoredIterations(state)));
 	auto data = Storage::details::EncryptedDescriptor();
 	if (!key
 		|| !Storage::details::DecryptLocal(
@@ -544,6 +802,11 @@ void RunEmergencyWipe(const QString &pin) {
 	auto state = State();
 	WriteState(state);
 	QFile::remove(StatePath());
+	// Explicitly, and not only through the write above, which can be refused:
+	// the device store must not go on saying a pin is armed here. It would
+	// make the next launch report the missing file as tampering, and it would
+	// do it on the unlock screen of the decoy.
+	DeviceLock::SetPinArmed(false);
 
 	Decoy::Arm(identity.firstName, identity.lastName, identity.phone);
 
@@ -577,6 +840,12 @@ void RunEmergencyWipe(const QString &pin) {
 	// still offer "Quit NovaGram" after the disguise is up.
 	Core::App().platformIntegration().refreshCustomJumpList();
 
+	// Last of the destruction, so that as little as possible of the disguise's
+	// own start is appended behind it. Not part of WipeLocalData(): the device
+	// lock's "start over" shares that sweep, and there the log is the only
+	// thing that can explain why this machine was blocked.
+	WipeLogs();
+
 	Core::App().logoutWithChecks(nullptr);
 }
 
@@ -596,12 +865,28 @@ QString UnlockTitle() {
 		: u"Unlock NovaGram"_q;
 }
 
-QString HiddenInputHint() {
+QString TamperedNotice() {
 	return UseRussianTexts()
+		? u"Файл настроек PIN удалён. Аварийный PIN и счётчик неудачных "
+			"попыток пропали вместе с ним; сам PIN по-прежнему нужен."_q
+		: u"The PIN settings file has been deleted. The emergency PIN and the "
+			"failed attempt counter went with it; the PIN itself is still "
+			"required."_q;
+}
+
+QString HiddenInputHint() {
+	// The unlock screen is where the fork already speaks to the person in
+	// front of it, and it is the one screen a deletion of tdata/novagram_pin
+	// cannot take away, so the warning is put in front of the usual hint
+	// instead of getting a widget of its own.
+	const auto hint = UseRussianTexts()
 		? u"Введите PIN и нажмите «Продолжить». "
 			"Введённые цифры и их количество намеренно скрыты."_q
 		: u"Enter the PIN and press \"Continue\". "
 			"The entered digits and their count are intentionally hidden."_q;
+	return PinStateTampered()
+		? (TamperedNotice() + u"\n\n"_q + hint)
+		: hint;
 }
 
 QString SubmitButton() {

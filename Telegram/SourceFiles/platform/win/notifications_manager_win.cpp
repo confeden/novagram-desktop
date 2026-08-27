@@ -34,6 +34,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QOperatingSystemVersion>
 
+#include <chrono>
+
 #include <Shobjidl.h>
 #include <shellapi.h>
 #include <strsafe.h>
@@ -54,6 +56,27 @@ namespace Notifications {
 namespace {
 
 constexpr auto kQuerySettingsEachMs = 1000;
+
+// How long a toast of this client may stay in the Windows Action Center.
+//
+// A toast is not only drawn: Windows copies its title, its subtitle and its
+// whole text into a store of its own, under the user profile, outside tdata and
+// outside anything the emergency wipe or the device binding reach. The client
+// takes them back out when it is locked and when it exits (clearAll), but a
+// crash, a kill or a power cut runs neither, and Windows then keeps them for
+// three days by default.
+//
+// An expiry is the one lifetime the client can hand over in advance: Windows
+// itself drops the notification at that moment whether this process is alive or
+// not. An hour is long enough that coming back to the computer still shows what
+// was missed, and short enough that a client which died last night has left
+// nothing behind by morning.
+//
+// This bounds how long the text is kept. Whether the text is put there at all
+// is a different question and a different mechanism - see
+// NovaGram::HideNotificationContentEnabled() and the options built in
+// Window::Notifications::Manager::getNotificationOptions.
+constexpr auto kToastExpireAfter = std::chrono::hours(1);
 
 crl::time LastSettingsQueryMs/* = 0*/;
 
@@ -801,6 +824,8 @@ bool Manager::Private::showNotificationInTryCatch(
 	};
 
 	auto toast = ToastNotification(toastXml);
+	toast.ExpirationTime(IReference<DateTime>(
+		winrt::clock::now() + kToastExpireAfter));
 	const auto token1 = toast.Activated([=](
 			const ToastNotification &sender,
 			const winrt::Windows::Foundation::IInspectable &object) {

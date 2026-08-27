@@ -310,6 +310,16 @@ bool ProxyData::tryCustomResolve() const {
 	// A proxy given as an address still resolves nothing, and that stays the
 	// way out where the endpoints are unreachable or the name only exists
 	// inside a company network.
+	//
+	// Type::Web is deliberately NOT here, and adding it would be a lie rather
+	// than a fix. The client never opens a socket to a Web proxy: it hands the
+	// host to a hidden WebView2, which resolves and connects with its own
+	// stack, and ToDirectIpProxy() has nowhere to put an address anyway - the
+	// carrier builds "https://<host>/?bridge=..." from the name, and swapping
+	// an IP in would break both TLS and the page's origin checks. So the
+	// resolution would be performed, discarded, and the DNS promise would only
+	// look kept. The user is told about that gap in the connection settings
+	// instead; the same reasoning as I6 for call addresses.
 	return (type == Type::Socks5
 			|| type == Type::Mtproto
 			|| type == Type::Http)

@@ -116,9 +116,19 @@ void RequestEnableAutomation() {
 		current = box.get();
 		FillAutomationConfirmBox(
 			box,
+			// NovaGram: this text named only the window commands, because it
+			// was written before the socket grew `lock` and the whole proxy
+			// set. Consent has to name what is actually granted, so the list
+			// is spelled out here instead of being split into a second
+			// prompt: the socket is one all-or-nothing capability, and a
+			// separate proxy consent would suggest the rest of it is
+			// harmless. WEB proxies are outside the grant altogether - see
+			// ProxyAllowedOverSocket().
 			u"An external program is trying to control "
 			u"Telegram Desktop over the local socket — read open "
-			u"windows and activate them.\n\nEnable local "
+			u"windows and activate them, lock the app, and list, add, "
+			u"remove and switch proxy servers (WEB proxies "
+			u"excluded).\n\nEnable local "
 			u"automation? While it is on, anything running under your "
 			u"user account can control the app."_q,
 			[=] {
@@ -244,6 +254,15 @@ void RequestEnableAutomation() {
 	return u"none"_q;
 }
 
+// NovaGram: the socket may point the client at a proxy, but never at a WEB
+// one. Enabling that type loads a page from the provider inside the client and
+// runs its JavaScript - that is code execution, not a change of route, and no
+// consent text makes it safe to hand to any process running under this user
+// account. Listing and removing a WEB proxy stay allowed: neither runs it.
+[[nodiscard]] bool ProxyAllowedOverSocket(const MTP::ProxyData &proxy) {
+	return (proxy.type != MTP::ProxyData::Type::Web);
+}
+
 [[nodiscard]] QString ProxyModeName(MTP::ProxyData::Settings settings) {
 	switch (settings) {
 	case MTP::ProxyData::Settings::Enabled: return u"enabled"_q;
@@ -329,6 +348,8 @@ void ShowProxyToast(const QString &text, Fn<void()> undo) {
 			: (status == MTP::ProxyData::Status::IncorrectSecret)
 			? u"incorrect proxy secret"_q
 			: u"invalid proxy"_q);
+	} else if (!ProxyAllowedOverSocket(proxy)) {
+		return Error(u"web proxies cannot be added over this socket"_q);
 	}
 	auto &proxies = App().settings().proxy();
 	auto object = QJsonObject();
@@ -395,6 +416,11 @@ void ShowProxyToast(const QString &text, Fn<void()> undo) {
 }
 
 [[nodiscard]] QByteArray HandleProxySelect(MTP::ProxyData proxy) {
+	// The single point where this socket can turn a proxy on, so the WEB check
+	// lives here and covers proxy-use, proxy-next and proxy-toggle alike.
+	if (!ProxyAllowedOverSocket(proxy)) {
+		return Error(u"web proxies cannot be enabled over this socket"_q);
+	}
 	auto &proxies = App().settings().proxy();
 	const auto wasSelected = proxies.selected();
 	const auto wasSettings = proxies.settings();
@@ -425,7 +451,15 @@ void ShowProxyToast(const QString &text, Fn<void()> undo) {
 		return Error(u"no proxies configured"_q);
 	}
 	const auto current = proxies.indexInList(proxies.selected());
-	return HandleProxySelect(proxies.list()[(current + 1) % count]);
+	// A WEB proxy in the list is stepped over instead of refused, so that one
+	// of them cannot wedge the rotation for every other entry.
+	for (auto step = 1; step <= count; ++step) {
+		const auto &proxy = proxies.list()[(current + step) % count];
+		if (ProxyAllowedOverSocket(proxy)) {
+			return HandleProxySelect(proxy);
+		}
+	}
+	return Error(u"no proxy that can be enabled over this socket"_q);
 }
 
 [[nodiscard]] QByteArray HandleProxyToggle() {

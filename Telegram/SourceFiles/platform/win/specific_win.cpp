@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "core/crash_reports.h"
 #include "core/version.h"
+#include "novagram/nova_screen_guard.h"
 
 #include <QtCore/QOperatingSystemVersion>
 #include <QtWidgets/QApplication>
@@ -535,6 +536,30 @@ bool AmbientScreenshotProtectionSupported() {
 void SetWindowScreenshotProtection(not_null<QWidget*> window, bool enabled) {
 	const auto handle = window->internalWinId();
 	if (!handle) {
+		return;
+	}
+	// NovaGram: every request to change a window's display affinity passes
+	// through here - upstream's and the fork's alike - so this is where the
+	// fork keeps the final say over it. Switching protection *on* is always
+	// let through; switching it off is refused while NovaGram's own screen
+	// guard holds the window.
+	//
+	// Two callers used to switch it off behind the fork's back, and both took
+	// down protection the fork had put up. Core::ScreenshotProtection sweeps
+	// every top level window with `false` the moment its last reason is
+	// released (core/core_screenshot_protection.cpp), and on Windows its only
+	// reasons are content ones - a self destructing photo, a payment form - so
+	// opening one view once photo and closing it cleared
+	// WDA_EXCLUDEFROMCAPTURE from the main window too. The media viewer
+	// switches its own window off for anything that is not forward restricted
+	// (media/view/media_view_overlay_widget.cpp), which kept the viewer out of
+	// the fork's protection entirely. Neither could be recovered from without
+	// a restart: the fork's watcher hangs on QEvent::Show and
+	// QEvent::WinIdChange, and a window already on the screen sends neither.
+	//
+	// The question is asked of the live setting, so the NovaGram settings
+	// toggle still turns the feature off - see NovaGram::SetScreenGuardEnabled.
+	if (!enabled && NovaGram::ScreenGuardHoldsWindows()) {
 		return;
 	}
 	const auto hwnd = reinterpret_cast<HWND>(handle);

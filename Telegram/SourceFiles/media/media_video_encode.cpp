@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ffmpeg/ffmpeg_frame_generator.h"
 #include "ffmpeg/ffmpeg_utility.h"
 #include "lottie/lottie_frame_generator.h"
+#include "settings.h" // NovaGram: cWorkingDir() for the scratch directory.
 
 #include <QtCore/QFileInfo>
 #include <QtCore/QTemporaryFile>
@@ -41,7 +42,18 @@ constexpr auto kMp3InMp4MinFrequency = 16'000;
 constexpr auto kMaxSilentAudioFill = crl::time(4 * 60 * 60 * 1000);
 constexpr auto kSilentAudioFillMargin = crl::time(1000);
 
+// NovaGram: the scratch files are plaintext copies of what is being sent, so
+// they live inside the working directory instead of the system temp folder,
+// where nothing the fork does can reach them. Under `tdata` they are covered
+// by the emergency wipe, which sweeps every entry of that directory
+// (NovaGram::WipeLocalData), and by whatever else already applies there.
+// Upstream returned QDir::tempPath() + "/tdtranscode".
 [[nodiscard]] QString TempDirectory() {
+	return cWorkingDir() + u"tdata/tdtranscode"_q;
+}
+
+// NovaGram: where versions before the move wrote, cleared once on upgrade.
+[[nodiscard]] QString LegacyTempDirectory() {
 	return QDir::tempPath() + u"/tdtranscode"_q;
 }
 
@@ -1831,16 +1843,26 @@ Result Run(Job &&job, Fn<bool(float64)> progress) {
 }
 
 void ClearStaleTempFiles() {
-	crl::async([] {
+	// NovaGram: both paths are resolved on the caller's thread, because
+	// cWorkingDir() is a plain global written once while starting up.
+	const auto directory = TempDirectory();
+	const auto legacy = LegacyTempDirectory();
+	crl::async([=] {
 		const auto stale = QDateTime::currentDateTime().addSecs(
 			-kStaleTempTimeout);
-		const auto entries = QDir(TempDirectory()).entryInfoList(
+		const auto entries = QDir(directory).entryInfoList(
 			QDir::Files | QDir::NoDotAndDotDot);
 		for (const auto &entry : entries) {
 			if (entry.lastModified() < stale) {
 				QFile::remove(entry.absoluteFilePath());
 			}
 		}
+		// NovaGram: whatever a previous version left in the system temp folder
+		// goes now and not at some age - nothing writes there any more, and
+		// every file there is a plaintext copy of a sent video lying outside
+		// everything the fork protects. An in-flight file of another client
+		// sharing the folder is open and simply refuses to be removed.
+		QDir(legacy).removeRecursively();
 	});
 }
 

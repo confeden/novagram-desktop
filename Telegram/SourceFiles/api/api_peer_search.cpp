@@ -14,11 +14,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 
 namespace Api {
-namespace {
-
-constexpr auto kMinSponsoredQueryLength = 4;
-
-} // namespace
 
 PeerSearch::PeerSearch(not_null<Main::Session*> session, Type type)
 : _session(session)
@@ -53,11 +48,15 @@ void PeerSearch::request(
 	}
 	cache.requested = true;
 	cache.result.query = _query;
-	if (_query.size() < kMinSponsoredQueryLength) {
-		cache.sponsoredReady = true;
-	} else if (_type == Type::WithSponsored) {
-		requestSponsored();
-	}
+
+	// NovaGram: contacts.getSponsoredPeers is never sent. It carried the
+	// text a person types into the chat list search - content, not an ad
+	// impression - to the advertising endpoint for every query of four
+	// characters or more. Sponsored messages inside chats, their display and
+	// their view/click reporting are a separate mechanism and stay untouched.
+	// The section is marked ready here so the search still completes.
+	cache.sponsoredReady = true;
+
 	requestPeers();
 }
 
@@ -88,39 +87,6 @@ void PeerSearch::requestPeers() {
 	_peerRequests.emplace(requestId, _query);
 }
 
-void PeerSearch::requestSponsored() {
-	const auto requestId = _session->api().request(
-		MTPcontacts_GetSponsoredPeers(MTP_string(_query))
-	).done([=](
-			const MTPcontacts_SponsoredPeers &result,
-			mtpRequestId requestId) {
-		result.match([&](const MTPDcontacts_sponsoredPeersEmpty &) {
-			finishSponsored(requestId, PeerSearchResult{});
-		}, [&](const MTPDcontacts_sponsoredPeers &data) {
-			_session->data().processUsers(data.vusers());
-			_session->data().processChats(data.vchats());
-			auto parsed = PeerSearchResult();
-			parsed.sponsored.reserve(data.vpeers().v.size());
-			for (const auto &peer : data.vpeers().v) {
-				const auto &data = peer.data();
-				const auto peerId = peerFromMTP(data.vpeer());
-				parsed.sponsored.push_back({
-					.peer = _session->data().peer(peerId),
-					.randomId = data.vrandom_id().v,
-					.sponsorInfo = TextWithEntities::Simple(
-						qs(data.vsponsor_info().value_or_empty())),
-					.additionalInfo = TextWithEntities::Simple(
-						qs(data.vadditional_info().value_or_empty())),
-				});
-			}
-			finishSponsored(requestId, std::move(parsed));
-		});
-	}).fail([=](const MTP::Error &error, mtpRequestId requestId) {
-		finishSponsored(requestId, PeerSearchResult{});
-	}).send();
-	_sponsoredRequests.emplace(requestId, _query);
-}
-
 void PeerSearch::finishPeers(
 		mtpRequestId requestId,
 		PeerSearchResult result) {
@@ -136,20 +102,6 @@ void PeerSearch::finishPeers(
 	}
 }
 
-void PeerSearch::finishSponsored(
-		mtpRequestId requestId,
-		PeerSearchResult result) {
-	const auto query = _sponsoredRequests.take(requestId);
-	Assert(query.has_value());
-
-	auto &cache = _cache[*query];
-	cache.sponsoredReady = true;
-	cache.result.sponsored = std::move(result.sponsored);
-	if (cache.peersReady && _query == *query) {
-		finish(cache.result);
-	}
-}
-
 void PeerSearch::finish(PeerSearchResult result) {
 	if (const auto onstack = base::take(_callback)) {
 		onstack(std::move(result));
@@ -161,9 +113,6 @@ void PeerSearch::clear() {
 	_callback = nullptr;
 	_cache.clear();
 	for (const auto &[requestId, query] : base::take(_peerRequests)) {
-		_session->api().request(requestId).cancel();
-	}
-	for (const auto &[requestId, query] : base::take(_sponsoredRequests)) {
 		_session->api().request(requestId).cancel();
 	}
 }

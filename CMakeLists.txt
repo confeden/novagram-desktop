@@ -43,6 +43,26 @@ if (NOT DESKTOP_APP_USE_PACKAGED AND WIN32)
     set(Python3_EXECUTABLE ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/python/Scripts/python)
 endif()
 
+# NovaGram: spell checking is done by the bundled Hunspell, never by the
+# operating system. On Windows the platform backend is ISpellChecker, so every
+# character typed into the compose field is handed to a Windows COM service
+# together with the words added to the personal dictionary. Hunspell runs
+# inside this process against dictionaries under tdata/dictionaries, so the
+# typed text never leaves the application.
+#
+# The option is upstream's own and already supported end to end: it swaps
+# spellcheck/platform/win/spellcheck_win.cpp for
+# spellcheck/third_party/spellcheck_hunspell.cpp, and Hunspell is compiled and
+# linked into the Windows build regardless of this flag. Everything above it -
+# "Manage dictionaries", auto-download, the per-language list - is the branch
+# tdesktop already takes when IsSystemSpellchecker() is false.
+#
+# FORCE, and not a plain set(), on purpose: out/CMakeCache.txt from an earlier
+# configure holds OFF, and a promise that depends on a stale cache entry is not
+# a promise. Set it to OFF here to compare against the system spellchecker.
+set(DESKTOP_APP_USE_HUNSPELL_ONLY ON CACHE BOOL
+    "NovaGram: never hand typed text to the system spellchecker." FORCE)
+
 include(cmake/variables.cmake)
 include(cmake/nice_target_sources.cmake)
 include(cmake/target_compile_options_if_exists.cmake)

@@ -1185,7 +1185,12 @@ private:
 		= HistoryView::DoubleClickQuickAction();
 	bool _translateButtonEnabled = false;
 	bool _usePlatformTranslation = false;
-	rpl::variable<bool> _translateChatEnabled = true;
+	// NovaGram: off by default. This flag is what makes TranslateTracker
+	// hand every message of an open chat to Platform::Language::Recognize,
+	// which on Windows is the ELS service in elscore.dll - received text
+	// crossing out of the application with no user action. The switch in
+	// Settings > Language turns it back on (I8).
+	rpl::variable<bool> _translateChatEnabled = false;
 	rpl::variable<int> _translateToRaw = 0;
 	rpl::variable<std::vector<LanguageId>> _skipTranslationLanguages;
 	rpl::event_stream<> _skipTranslationLanguagesChanges;

@@ -1624,6 +1624,8 @@ PRIVATE
     mtproto/web_proxy/web_proxy_webview.cpp
     mtproto/web_proxy/web_proxy_webview.h
 
+    novagram/nova_authenticode.cpp
+    novagram/nova_authenticode.h
     novagram/nova_autodelete.cpp
     novagram/nova_autodelete.h
     novagram/nova_branding.cpp
@@ -2459,9 +2461,13 @@ if (MSVC)
     target_link_libraries(Telegram
     PRIVATE
         delayimp
+        # WinVerifyTrust, for novagram/nova_authenticode.cpp. Crypt32 is
+        # already in cmake/options_win.cmake; wintrust was not linked at all.
+        wintrust
     )
     target_link_options(Telegram
     PRIVATE
+        /DELAYLOAD:wintrust.dll
         /DELAYLOAD:secur32.dll
         /DELAYLOAD:winmm.dll
         /DELAYLOAD:ws2_32.dll

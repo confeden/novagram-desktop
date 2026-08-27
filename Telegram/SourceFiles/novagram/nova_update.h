@@ -27,10 +27,33 @@ enum class Phase : uchar {
 	Failed,
 };
 
+// Why a failed phase is not enough. "Could not check" sends the user to their
+// connection, and for two of the three reasons below that is the wrong place
+// to look: one of them is the release host asking to be left alone for a
+// while, and the other is this client refusing a file it does not trust. The
+// second in particular must never read as a network hiccup.
+enum class Failure : uchar {
+	None,
+
+	// Nothing answered, or the transfer broke and did not recover.
+	Network,
+
+	// The release host answered 403 or 429: too many checks came from this
+	// address, and it said when it would answer again.
+	RateLimited,
+
+	// The installer arrived and was refused - its checksum does not match what
+	// the release said, or it is not signed by the release certificate. This
+	// is the shape an attack on the update path has, so it is never quietly
+	// retried into looking like something else.
+	Rejected,
+};
+
 struct Status {
 	Phase phase = Phase::Idle;
 	Release release;
 	int progress = 0;
+	Failure failure = Failure::None;
 };
 
 // The only network request NovaGram makes outside Telegram, so it is a
@@ -40,7 +63,11 @@ struct Status {
 [[nodiscard]] bool CheckEnabled();
 void SetCheckEnabled(bool enabled);
 
-// Begins the eight hour cycle, with the first check shortly after start.
+// Begins the eight hour cycle. The first check comes shortly after start only
+// if eight hours have actually passed since the last one: the attempt is
+// written down and read back here, so restarting the client is not a way of
+// asking again.
+//
 // Does nothing at all while the decoy is on: the decoy promises that the
 // process opens no sockets, and an update check would break that promise in
 // the most traceable way possible.

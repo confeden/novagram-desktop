@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "main/main_session.h"
+#include "novagram/nova_read_status.h"
 
 namespace Api {
 namespace {
@@ -34,6 +35,26 @@ ViewsManager::ViewsManager(not_null<ApiWrap*> api)
 
 void ViewsManager::scheduleIncrement(not_null<HistoryItem*> item) {
 	auto peer = item->history()->peer;
+	if (NovaGram::ReadStatusWithheldFor(peer)) {
+		// A boundary, not a promise. Nothing in the fork claims that the views
+		// of a channel are silent, and nothing here makes them so: the counter
+		// under a channel post is a number and never a name - its author reads
+		// "1.2K views" and cannot learn who - so counting one does not tell
+		// anybody that this account read them, which is the single thing this
+		// feature hides. A channel carries no rule either, the settings text
+		// saying in so many words that channels are left alone, so asking the
+		// gate about one answers no by construction. A switch of its own was
+		// considered for that and rejected: a switch has to turn off a promise
+		// (I8), and there is no promise here to turn off.
+		//
+		// What the question does close is the one corner where it can matter -
+		// a message carrying a view counter that sits in a private dialog
+		// whose receipts are withheld, where this request would name that
+		// single peer. Nothing is remembered on the way out, so the item is
+		// offered again by the next pass over the visible area, the same way
+		// ApiWrap::markContentsRead leaves an undecided one.
+		return;
+	}
 	auto i = _incremented.find(peer);
 	if (i != _incremented.cend()) {
 		if (i->second.contains(item->id)) {

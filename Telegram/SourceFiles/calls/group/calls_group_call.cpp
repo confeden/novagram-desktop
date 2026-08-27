@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "base/global_shortcuts.h"
 #include "base/random.h"
+#include "novagram/nova_calls.h"
 #include "tde2e/tde2e_api.h"
 #include "tde2e/tde2e_integration.h"
 #include "webrtc/webrtc_video_track.h"
@@ -126,6 +127,65 @@ using JoinClientFields = std::variant<
 	return JoinVideoEndpoint{
 		video.value("endpoint").toString().toStdString(),
 	};
+}
+
+// A group or conference call gets its addresses from the join response, not
+// from phoneConnection, so the filter in calls_call.cpp never sees them. They
+// end up in rtc::SocketAddress inside tgcalls exactly like the one to one ones
+// do, and a name there is left unresolved and handed to the system
+// getaddrinfo - the only way a group call can produce a DNS query at all, and
+// the same leak AcceptableCallAddress exists to prevent. See nova_calls.h.
+//
+// Unlike relay-only this is not a switch: no call of any kind needs DNS, so a
+// name is dropped whatever the setting says, exactly as for one to one.
+[[nodiscard]] QByteArray FilterJoinResponseAddresses(const QByteArray &json) {
+	auto error = QJsonParseError{ 0, QJsonParseError::NoError };
+	const auto document = QJsonDocument::fromJson(json, &error);
+	if (error.error != QJsonParseError::NoError || !document.isObject()) {
+		// Not worth a second complaint: ParseJoinResponse already made one,
+		// and an unparsed payload carries no address we could use anyway.
+		return json;
+	}
+	auto root = document.object();
+	auto transport = root.value("transport").toObject();
+	const auto candidates = transport.value("candidates").toArray();
+	if (candidates.isEmpty()) {
+		// A stream payload has no transport at all. Nothing to filter.
+		return json;
+	}
+	auto accepted = QJsonArray();
+	for (const auto &candidate : candidates) {
+		const auto address = candidate.toObject().value("ip").toString();
+		if (NovaGram::Calls::AcceptableCallAddress(address)) {
+			accepted.append(candidate);
+		} else {
+			LOG(("Call Info: refused group call address '%1', "
+				"not a numeric one.").arg(address));
+		}
+	}
+	if (accepted.size() == candidates.size()) {
+		// The normal case, and the payload goes on byte for byte as it came.
+		return json;
+	} else if (accepted.isEmpty()) {
+		// The call will not connect now, and without this line the reason
+		// would be indistinguishable from a network failure.
+		LOG(("Call Error: NovaGram refused every address "
+			"the group call server sent."));
+	}
+	transport.insert("candidates", accepted);
+	root.insert("transport", transport);
+	return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+// Every join response reaches a group instance through here, for the call and
+// for the screen share alike. tgcalls parses the payload itself, so this is
+// the last point on our side where the addresses in it are still ours to
+// refuse - call this instead of setJoinResponsePayload.
+void SetJoinResponsePayload(
+		const std::unique_ptr<tgcalls::GroupInstanceCustomImpl> &instance,
+		const QByteArray &json) {
+	instance->setJoinResponsePayload(
+		FilterJoinResponseAddresses(json).toStdString());
 }
 
 [[nodiscard]] const std::string &EmptyString() {
@@ -2404,7 +2464,7 @@ void GroupCall::handlePossibleCreateOrJoinResponse(
 			} else {
 				LOG(("Call Error: Bad response for 'presentation' flag."));
 			}
-			_screenInstance->setJoinResponsePayload(json.toStdString());
+			SetJoinResponsePayload(_screenInstance, json);
 		});
 	} else {
 		if (!_instance) {
@@ -2429,7 +2489,7 @@ void GroupCall::handlePossibleCreateOrJoinResponse(
 			} else {
 				setInstanceMode(InstanceMode::Rtc);
 				setCameraEndpoint(endpoint ? endpoint->id : std::string());
-				_instance->setJoinResponsePayload(json.toStdString());
+				SetJoinResponsePayload(_instance, json);
 			}
 			updateInstanceVolumes();
 			fillActiveVideoEndpoints();

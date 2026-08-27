@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QByteArray>
 #include <QtCore/QObject>
+#include <QtCore/QString>
 #include <crl/crl_time.h>
 
 #include <deque>
@@ -25,6 +26,14 @@ class Window;
 } // namespace Webview
 
 namespace MTP::WebProxy {
+
+// NovaGram: the single place that names the WebView profile the carrier is
+// configured with. Removing this directory is the only clearing that does
+// anything on Windows, where Webview::ClearStorageDataByToken() has an empty
+// body. It sits directly under tdata, so the fork's own sweep in
+// NovaGram::WipeLocalData() already reaches it; logout goes through
+// Transport::ClearStorage().
+[[nodiscard]] QString StoragePath();
 
 class WebviewCarrier final : public QObject {
 public:

@@ -125,6 +125,10 @@ send('h');
 
 } // namespace
 
+QString StoragePath() {
+	return cWorkingDir() + u"tdata/wvproxy"_q;
+}
+
 WebviewCarrier::WebviewCarrier(
 		const ProxyData &proxy,
 		uint64 generation,
@@ -138,7 +142,11 @@ WebviewCarrier::WebviewCarrier(
 	nullptr,
 	Webview::WindowConfig{
 		.storageId = {
-			.path = cWorkingDir() + u"tdata/wvproxy"_q,
+			// NovaGram: the path is named once, in StoragePath(), because the
+			// fork has to be able to remove it. The token below is upstream's
+			// and is the same in every installation; on Windows nothing reads
+			// it - the profile is identified by the path alone.
+			.path = StoragePath(),
 			.token = QByteArray::fromHex(
 				"ec5f15fe14864faaa018d270aa2a0df8"),
 		},

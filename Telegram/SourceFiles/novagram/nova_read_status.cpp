@@ -731,6 +731,10 @@ bool ReadStatusPending(not_null<History*> history) {
 	return ReadStatusPendingFor(history->peer);
 }
 
+bool ReadStatusWithheldFor(not_null<PeerData*> peer) {
+	return ReadStatusHiddenFor(peer) || ReadStatusPendingFor(peer);
+}
+
 void NoteHeldRead(not_null<History*> history, MsgId tillId) {
 	const auto peer = history->peer;
 	Get(&peer->session()).noteHeldRead(peer->id, tillId);
@@ -831,7 +835,8 @@ void ReadStatusBox(
 			? (russian
 				? u"Этот диалог начали не вы, поэтому NovaGram не сообщает "
 					"собеседнику, что вы прочитали его сообщения: галочки "
-					"прочтения у него не появляются.\n\nСкрытие "
+					"прочтения у него не появляются, а в списке "
+					"просмотревших его истории вас нет.\n\nСкрытие "
 					"снимется само, как только вы отправите сюда "
 					"любое сообщение — с этого устройства или с "
 					"другого: ответ и так говорит собеседнику, "
@@ -841,7 +846,8 @@ void ReadStatusBox(
 					"после перезапуска и на других устройствах."_q
 				: u"You did not start this dialog, so NovaGram does not tell "
 					"the other side that you read their messages: the read "
-					"marks never appear for them.\n\nHiding stops by itself as "
+					"marks never appear for them, and the viewer list of "
+					"their stories does not name you.\n\nHiding stops by itself as "
 					"soon as you send anything here, from this device or from "
 					"another one: an answer tells the other side that you read "
 					"it anyway.\n\nSide effect: for Telegram "
@@ -859,12 +865,14 @@ void ReadStatusBox(
 			box,
 			rpl::single(russian
 				? u"Отключение необратимо: как только подтверждение уйдёт на "
-					"сервер, собеседник увидит, что сообщения прочитаны, и "
+					"сервер, собеседник увидит, что сообщения прочитаны — "
+					"и что вы смотрели его истории, — и "
 					"вернуть скрытие в этом диалоге будет нельзя. Тот же "
 					"необратимый шаг сделает и ваш ответ в этом диалоге — "
 					"с любого устройства."_q
 				: u"Turning it off cannot be undone: once the receipt reaches "
-					"the server the other side sees the messages as read, and "
+					"the server the other side sees the messages as read and "
+					"finds you in the viewer list of their stories, and "
 					"hiding cannot be restored in this dialog. Answering here "
 					"takes the same irreversible step, from any device."_q),
 			st::boxDividerLabel));

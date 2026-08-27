@@ -572,13 +572,20 @@ void Runner::tick() {
 }
 
 void Runner::process(const Entry &entry) {
-	if (!entry.erase) {
+	if (!entry.erase && entry.stage != Stage::Delete) {
 		// The rules are read again here, not only when the message was sent.
 		// Switching auto delete off, choosing "do not delete here", or being
 		// made an administrator of the group has to spare what is already
 		// waiting in the queue, otherwise the menu says one thing and the
 		// queue does another. An Erase evidence entry is a direct order and
 		// is not subject to any of this.
+		//
+		// An entry that already reached Stage::Delete is not spared either:
+		// its text has been replaced by the placeholder, so the content is
+		// gone whatever happens now, and the choice is between removing the
+		// message and leaving a lone dot in the conversation for ever. The
+		// dot is the worse trace of the two. Android decides this the same
+		// way.
 		const auto peer = _session->data().peerLoaded(entry.peerId);
 		if (!_state.enabled || (peer && !AppliesTo(peer))) {
 			drop(entry);

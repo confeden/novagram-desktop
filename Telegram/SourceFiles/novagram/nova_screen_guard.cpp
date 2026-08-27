@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_screen_guard.h"
 
 #include "core/application.h"
+#include "core/core_screenshot_protection.h"
 #include "core/core_settings.h"
 #include "logs.h"
 
@@ -27,6 +28,15 @@ namespace {
 constexpr auto kEnabledKey = "novagram_screen_guard"_cs;
 
 #ifdef Q_OS_WIN
+
+// Upstream protects the screen for reasons of its own - a self destructing
+// photo on screen, an open payment form - and sweeps every top level window
+// itself when the last of them goes. While it holds one, the affinity of a
+// window is not this guard's to release even when the guard is switched off.
+[[nodiscard]] bool UpstreamProtectionActive() {
+	return Core::IsAppLaunched()
+		&& Core::App().screenshotProtection().active();
+}
 
 // Never QWidget::winId() here, however much it looks like the way to get the
 // handle: it creates the native window when there is none, and this filter is
@@ -57,6 +67,16 @@ void ApplyToWindow(not_null<QWidget*> widget) {
 		return;
 	}
 	const auto enabled = ScreenGuardEnabled();
+	if (!enabled && UpstreamProtectionActive()) {
+		// This is the only path that ever clears an affinity, and it must not
+		// clear one it did not set. With the guard switched off the window is
+		// hidden because upstream is showing content that asks for it, and
+		// upstream takes its own protection down when that content is gone.
+		DEBUG_LOG(("Screen guard: window %1 left as is, guard off and"
+			" upstream protection active."
+			).arg(QString::number(reinterpret_cast<quintptr>(handle), 16)));
+		return;
+	}
 	const auto affinity = enabled
 		? WDA_EXCLUDEFROMCAPTURE
 		: WDA_NONE;
@@ -221,13 +241,32 @@ bool ScreenGuardSupported() {
 }
 
 bool ScreenGuardEnabled() {
-	if (!ScreenGuardSupported()) {
+	if (!ScreenGuardSupported() || !Core::IsAppLaunched()) {
+		// Since Platform::SetWindowScreenshotProtection asks this question,
+		// it can be asked from anywhere a window changes hands, including
+		// windows being taken down after the application object is gone.
 		return false;
 	}
 	return Core::App().settings().readPref<bool>(kEnabledKey, true);
 }
 
+bool ScreenGuardHoldsWindows() {
+	// Deliberately the live setting and nothing else. The refusal in
+	// Platform::SetWindowScreenshotProtection is built on this answer, and
+	// SetScreenGuardEnabled() writes the setting before it sweeps, so the one
+	// path that is meant to clear the affinity finds the guard already
+	// answering "not mine" - see the comment there.
+	return ScreenGuardEnabled();
+}
+
 void SetScreenGuardEnabled(bool enabled) {
+	// Written before the sweep, and that order is the whole way through the
+	// refusal in Platform::SetWindowScreenshotProtection: it asks
+	// ScreenGuardHoldsWindows(), which reads this very setting, so by the time
+	// the sweep runs the guard no longer claims these windows. Switching the
+	// guard on takes the same sweep in the other direction, and that is what
+	// gives back the affinity to a window which never gets another Show event
+	// to be caught on.
 	Core::App().settings().writePref<bool>(kEnabledKey, enabled);
 	Core::App().saveSettingsDelayed();
 #ifdef Q_OS_WIN

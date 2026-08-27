@@ -24,6 +24,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "history/history_unread_things.h"
 #include "main/main_session.h"
+#include "novagram/nova_read_status.h"
 #include "window/notifications_manager.h"
 
 namespace Data {
@@ -701,6 +702,20 @@ void SavedSublist::sendReadTillRequest() {
 	if (!parentChat) {
 		return;
 	}
+	// The rule is kept per dialog and this dialog is a channel, but the mark
+	// this request leaves is seen by the user of the sublist: a monoforum is
+	// that person writing into the channel's direct messages, and the receipt
+	// lands on them and on nobody else. Asking the gate about the channel would
+	// answer no every time - a channel never carries a rule of its own - and
+	// the receipt would go out past a feature that believes it covers this.
+	const auto receiptPeer = sublistPeer();
+	if (NovaGram::ReadStatusWithheldFor(receiptPeer)) {
+		// Held rather than dropped: readTill() has already moved the local
+		// position, so leaving it at that would keep the sublist read on this
+		// client and unread on every other one for good (I2).
+		holdReadTillRequest(receiptPeer);
+		return;
+	}
 	if (_readRequestTimer.isActive()) {
 		_readRequestTimer.cancel();
 	}
@@ -716,6 +731,28 @@ void SavedSublist::sendReadTillRequest() {
 		_readRequestId = 0;
 		reloadUnreadCountIfNeeded();
 	})).send();
+}
+
+void SavedSublist::holdReadTillRequest(not_null<PeerData*> receiptPeer) {
+	if (_novaReadHeld) {
+		return;
+	}
+	_novaReadHeld = true;
+	// Nothing to re-arm: the rules change when a dialog is finally decided and
+	// when one is revealed, and both fire this stream, so the receipt waits for
+	// an answer instead of for a timeout. Once it has gone out the read
+	// position is level with the sent one and the handler falls through, so the
+	// subscription is never dropped from inside its own callback.
+	NovaGram::ReadStatusUpdates(
+		&session()
+	) | rpl::on_next([=] {
+		if (_readRequestId
+			|| _sentReadTill >= computeInboxReadTillFull()
+			|| NovaGram::ReadStatusWithheldFor(receiptPeer)) {
+			return;
+		}
+		sendReadTillRequest();
+	}, _lifetime);
 }
 
 void SavedSublist::reloadUnreadCountIfNeeded() {

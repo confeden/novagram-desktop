@@ -17,6 +17,19 @@ inline constexpr auto kMaxPinLength = 6;
 [[nodiscard]] bool PinModeEnabled();
 [[nodiscard]] bool HasEmergencyPin();
 
+// True when tdata/novagram_pin is gone while the device store still says a pin
+// is armed on this installation - i.e. somebody removed the emergency pin, the
+// lockout counter and the pin mode in one gesture. Told apart from a first
+// run, where the file legitimately does not exist and nothing was ever armed.
+[[nodiscard]] bool PinStateTampered();
+
+// Reads tdata/novagram_pin and writes it straight back, so that it follows the
+// device binding between sealed and unsealed. Called by the device lock while
+// the machine secret is still there (N15) - a file sealed to a secret that has
+// already gone is a file nothing can open. Does nothing when there is no state
+// file, and never writes over one this machine could not read.
+void RewriteState();
+
 void SetPinModeEnabled(bool enabled);
 
 [[nodiscard]] bool ShuffledKeypadEnabled();
@@ -64,6 +77,8 @@ void WipeLocalData();
 [[nodiscard]] bool UseRussianTexts();
 
 [[nodiscard]] QString UnlockTitle();
+[[nodiscard]] QString TamperedNotice();
+// Carries TamperedNotice() in front of it while PinStateTampered().
 [[nodiscard]] QString HiddenInputHint();
 [[nodiscard]] QString SubmitButton();
 [[nodiscard]] QString WrongPin();

@@ -363,6 +363,13 @@ void Watcher::pushScope(
 void Watcher::scopeAnswered(int index, bool told) {
 	if (told && index >= 0 && index < kDefaultNotifyTypes) {
 		_scopeTold[index] = true;
+	} else if (!told) {
+		// The other half of the line pushScopes writes when it skips a scope.
+		// Both ways of failing to get the flag onto the server were silent, and
+		// so was succeeding, which left the log unable to tell a run that kept
+		// the promise from a run that never managed to - the one thing anybody
+		// reading it wants to know.
+		LOG(("NovaGram: notify previews, scope %1 was refused.").arg(index));
 	}
 	if (_scopesInFlight > 0) {
 		--_scopesInFlight;
@@ -382,6 +389,8 @@ void Watcher::scopeAnswered(int index, bool told) {
 	}
 	_state.scopesConfirmed = true;
 	save();
+	LOG(("NovaGram: notify previews, all %1 scopes acknowledged "
+		"show_previews=false.").arg(kDefaultNotifyTypes));
 	sweepPeers();
 }
 

@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/proxy_check.h"
 #include "mtproto/web_proxy/web_proxy_transport.h"
+#include "novagram/nova_pin.h" // NovaGram::UseRussianTexts.
 #include "qr/qr_generate.h"
 #include "settings/settings_common.h"
 #include "storage/localstorage.h"
@@ -97,6 +98,23 @@ using ProxyData = MTP::ProxyData;
 	}
 
 	return urls;
+}
+
+// NovaGram: replaces lng_proxy_web_warning wherever a Web proxy is configured
+// or offered. Upstream's wording is fair about the page, but it says nothing
+// about what the fork stops covering, and that is the part a NovaGram user is
+// entitled to know. Two sentences: the mechanics, then the one limit that
+// matters here (D4).
+[[nodiscard]] QString WebProxyWarning() {
+	return NovaGram::UseRussianTexts()
+		? u"Прокси типа WEB запускает внутри клиента веб-страницу поставщика "
+			u"и пропускает через её JavaScript весь трафик Telegram. Защита "
+			u"DNS в NovaGram на него не распространяется: имена разрешает "
+			u"встроенный WebView2, а не сам клиент."_q
+		: u"A WEB proxy runs the provider's web page inside the client and "
+			u"passes all Telegram traffic through its JavaScript. NovaGram's "
+			u"DNS protection does not cover it: names are resolved by the "
+			u"built-in WebView2, not by the client."_q;
 }
 
 [[nodiscard]] bool ProxyDataIsShareable(const ProxyData &proxy) {
@@ -446,6 +464,14 @@ void AddProxyFromClipboard(
 		}
 		if (!contains) {
 			controller->addNewItem(proxy);
+		}
+		// NovaGram: pasting is a deliberate action taken inside the connection
+		// settings and only puts the proxy in the list - it does not switch to
+		// it - so a WEB proxy is still accepted here, unlike from a tapped
+		// link. It is not accepted silently: the same warning is shown before
+		// the row is ever selected.
+		if (proxy.type == ProxyData::Type::Web) {
+			show->showBox(Ui::MakeInformBox(WebProxyWarning()));
 		}
 		return Result::Success;
 	};
@@ -1626,7 +1652,7 @@ void ProxyBox::setupTypes() {
 	auto warning = _type->value(
 	) | rpl::map([](Type type) {
 		return (type == Type::Web)
-			? tr::lng_proxy_web_warning(tr::now)
+			? WebProxyWarning()
 			: tr::lng_proxy_sponsor_warning(tr::now);
 	});
 	_aboutSponsored = _content->add(object_ptr<Ui::SlideWrap<>>(
@@ -2093,9 +2119,9 @@ void ProxiesBoxController::ShowApplyConfirmation(
 			table->addRow(
 				object_ptr<Ui::FlatLabel>(
 					table,
-					(type == Type::Web)
-						? tr::lng_proxy_web_warning()
-						: tr::lng_proxy_sponsor_warning(),
+					rpl::single((type == Type::Web)
+						? WebProxyWarning()
+						: tr::lng_proxy_sponsor_warning(tr::now)),
 					st::proxyApplyBoxSponsorLabel),
 				object_ptr<Ui::RpWidget>(nullptr),
 				st::proxyApplyBoxSponsorMargin,

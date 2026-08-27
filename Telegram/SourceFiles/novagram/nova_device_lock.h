@@ -37,6 +37,24 @@ enum class State : uchar {
 	Foreign,
 };
 
+// Fork files other than key_data that carry the same seal. The value only
+// picks the context that goes into the AAD, so a sealed blob cannot be moved
+// from one of these files into another.
+enum class SealedFile : uchar {
+	Pin,
+	Decoy,
+};
+
+enum class OpenResult : uchar {
+	// No seal in front of the value: written by an older build, or while the
+	// binding was off. The bytes are handed back unchanged.
+	Plain,
+	// Sealed, and opened on this machine.
+	Opened,
+	// Sealed, and this machine cannot open it.
+	Foreign,
+};
+
 // Reads the binding file. Must run before the storage domain is started and
 // before anything asks for Wrap()/Unwrap().
 void Start();
@@ -49,23 +67,59 @@ void Start();
 // overwriting it would destroy data that the rightful machine still opens.
 [[nodiscard]] bool Blocked();
 
+// The owner's preference. Not the same question as DataSealed(): a preference
+// can outlive the mechanism that was supposed to keep it.
 [[nodiscard]] bool Enabled();
 
+// What the disk actually holds after the last read or write of the accounts
+// file. The settings toggle draws this one: a switch that says "bound" over a
+// tdata folder that is portable again is a promise the file does not keep.
+[[nodiscard]] bool DataSealed();
+
 // Rewrites the binding file and re-writes the accounts file through it. Does
-// nothing while Blocked().
+// nothing while Blocked(). Switching on while the preference is already on but
+// nothing is sealed is a retry, not a no-op.
 void SetEnabled(bool enabled);
 
 // Wraps / unwraps the passcode-encrypted local key, which is the one value
 // every other file under tdata hangs from. Wrap() returns its argument
-// unchanged while the binding is off; Unwrap() returns an empty array and
-// flips Blocked() when the value belongs to another machine.
+// unchanged while the binding is off or while this machine offers no mechanism
+// at all, and an **empty** array when a secret exists and sealing failed - the
+// caller must then refuse the write, never fall back to the plaintext, because
+// that is a silent unbind of data the owner asked to be bound. Unwrap()
+// returns an empty array and flips Blocked() when the value belongs to another
+// machine.
 [[nodiscard]] QByteArray Wrap(const QByteArray &keyEncrypted);
 [[nodiscard]] QByteArray Unwrap(const QByteArray &stored);
+
+// The same seal for the fork's own side files. Unlike Wrap()/Unwrap() these
+// never touch Blocked(): one unreadable side file must not send the whole
+// installation to the "another device" screen, and must never destroy
+// anything (D13).
+//
+// SealPayload() follows Wrap()'s contract - the argument unchanged when there
+// is nothing to seal to, an empty array when sealing failed and the write has
+// to be refused.
+[[nodiscard]] QByteArray SealPayload(
+	SealedFile file,
+	const QByteArray &plain);
+[[nodiscard]] OpenResult OpenPayload(
+	SealedFile file,
+	const QByteArray &stored,
+	QByteArray &plain);
 
 // True when what was read from disk is not what would be written now: an
 // unbound blob from an older build, or a binding switched on or off since the
 // last write. The caller answers by rewriting the accounts file.
 [[nodiscard]] bool NeedsRewrite();
+
+// Device-bound record of "a NovaGram pin is set on this installation". It
+// lives next to the machine secret and not in tdata/novagram_pin, because
+// deleting that one file is the cheapest way to take the emergency pin, the
+// lockout counter and the pin mode away in a single gesture. The mismatch -
+// this flag on, the file gone - is what makes the deletion detectable.
+[[nodiscard]] bool PinArmed();
+void SetPinArmed(bool armed);
 
 // Drops the unreadable data together with the stale binding, so that the next
 // start is an ordinary first start. Only the blocked screen calls this: it is

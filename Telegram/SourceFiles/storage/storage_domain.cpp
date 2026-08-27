@@ -234,6 +234,19 @@ Domain::StartModernResult Domain::startModern(
 void Domain::writeAccounts() {
 	Expects(!_owner->accounts().empty());
 
+	// NovaGram: sealed before anything is written. An empty answer means the
+	// seal was refused - a mechanism exists and could not be used - and the
+	// only two other options are both wrong: writing the key unbound silently
+	// unbinds data the owner asked to be bound, and writing an empty key
+	// destroys the installation. Keeping the previous file is the one answer
+	// that loses nothing.
+	const auto keyEncrypted = NovaGram::DeviceLock::Wrap(_passcodeKeyEncrypted);
+	if (keyEncrypted.isEmpty()) {
+		LOG(("App Error: the accounts file was not written, "
+			"the device seal was refused."));
+		return;
+	}
+
 	const auto path = BaseGlobalPath();
 	if (!QDir().exists(path)) {
 		QDir().mkpath(path);
@@ -241,7 +254,7 @@ void Domain::writeAccounts() {
 
 	FileWriteDescriptor key(ComputeKeyName(_dataName), path);
 	key.writeData(_passcodeKeySalt);
-	key.writeData(NovaGram::DeviceLock::Wrap(_passcodeKeyEncrypted));
+	key.writeData(keyEncrypted);
 
 	const auto &list = _owner->accounts();
 

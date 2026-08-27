@@ -52,6 +52,13 @@ void StartReadStatus(not_null<Main::Session*> session);
 
 [[nodiscard]] bool ReadStatusPendingFor(not_null<PeerData*> peer);
 
+// Nothing may be told to the server about this peer yet: the dialog either
+// hides its receipts or has not been decided, and while it waits the gate
+// answers the same as if it did (I2). For the callers whose two answers differ
+// - a receipt that is held apart from one that is dropped - the two questions
+// above are still asked one at a time.
+[[nodiscard]] bool ReadStatusWithheldFor(not_null<PeerData*> peer);
+
 // Writes down how far the user has read in a dialog whose receipts are being
 // withheld. The desktop keeps no local copy of that position: at every start
 // History::applyDialogFields takes it from the server, and the server is by

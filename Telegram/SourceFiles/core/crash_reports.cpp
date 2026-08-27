@@ -10,7 +10,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/version.h"
 #include "platform/platform_specific.h"
 #include "base/platform/base_platform_info.h"
-#include "core/launcher.h"
 
 #include <signal.h>
 #include <new>
@@ -331,7 +330,13 @@ void StartCatching() {
 			: u"%1"_q).arg(AppVersion)).toUtf8().constData();
 	ProcessAnnotations["Launched"] = QDateTime::currentDateTime().toString("dd.MM.yyyy hh:mm:ss").toUtf8().constData();
 	ProcessAnnotations["Platform"] = PlatformString().toUtf8().constData();
-	ProcessAnnotations["UserTag"] = QString::number(Core::Launcher::Instance().installationTag(), 16).toUtf8().constData();
+
+	// No "UserTag" annotation. Upstream puts the installation tag here, which
+	// on the receiving side groups every report ever sent from this computer
+	// under one identifier. The fork does not send reports at all, and the tag
+	// itself no longer outlives the process (core/launcher.cpp), so writing it
+	// into a dump that a person may still hand over by hand would put back
+	// exactly what was removed.
 
 	QString dumpspath = cWorkingDir() + u"tdata/dumps"_q;
 	QDir().mkpath(dumpspath);

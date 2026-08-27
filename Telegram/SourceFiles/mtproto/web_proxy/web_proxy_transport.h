@@ -42,9 +42,15 @@ public:
 		Fn<void()> failed;
 	};
 
+	// Does nothing while the decoy is on - see the comment at the definition.
 	static void Activate(const ProxyData &proxy);
 	static void Deactivate();
 	static void Shutdown();
+
+	// NovaGram: drops the WebView profile at StoragePath(). Retires the live
+	// carrier first, because Windows does not remove a file that is open, and
+	// lets the transport's own retry bring a fresh one up afterwards.
+	static void ClearStorage();
 	[[nodiscard]] static Transport *Instance();
 	[[nodiscard]] static State CurrentState(const ProxyData &proxy);
 	[[nodiscard]] static rpl::producer<StateChange> StateChanges();

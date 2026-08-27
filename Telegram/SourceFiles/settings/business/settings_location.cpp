@@ -243,7 +243,15 @@ void Location::chooseOnMap() {
 			venue.lat,
 			venue.lon,
 			Data::LocationPoint::NoAccessHash);
-		copy.address = venue.address;
+		// NovaGram: a point dropped on the map no longer carries a geocoded
+		// street name, only its coordinates, so it must not overwrite an
+		// address the user typed here by hand. An empty field is still
+		// filled, because a location without an address counts as unset.
+		// A venue chosen from the list keeps overwriting it: that address
+		// comes from the server with the venue, not from a geocoder.
+		if (!venue.justLocation() || copy.address.trimmed().isEmpty()) {
+			copy.address = venue.address;
+		}
 		_data = std::move(copy);
 	};
 	const auto session = &controller()->session();

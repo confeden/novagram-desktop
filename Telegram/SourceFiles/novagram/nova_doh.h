@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QString>
 #include <QtCore/QUrl>
 #include <QtNetwork/QNetworkProxy>
+#include <QtNetwork/QSslConfiguration>
 #include <vector>
 
 namespace NovaGram::Doh {
@@ -56,6 +57,17 @@ void SetEndpoints(const std::vector<Endpoint> &list);
 // PAC file, a request that trusts the application-wide setting goes out
 // directly, into nothing, and waits there for ever.
 [[nodiscard]] QNetworkProxy ProxyFor(const QUrl &url);
+
+// The TLS configuration that allows the roots of nova_doh_roots.h and nothing
+// else - see the definition for what handing Qt an explicit list actually
+// does.
+//
+// Shared with the update checker rather than kept private here, and not by
+// accident: the update check ends with an executable being run, so it is the
+// one exchange in the fork where a certificate authority someone added to this
+// machine would be worth the most. The list is not a list of hosts, it is a
+// list of authorities, and it happens to cover the release host as well.
+[[nodiscard]] const QSslConfiguration &PinnedConfiguration();
 
 enum class RecordType {
 	A,

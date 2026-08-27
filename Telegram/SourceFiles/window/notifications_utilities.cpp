@@ -21,6 +21,30 @@ namespace {
 // Delete notify photo file after 1 minute of not using.
 constexpr int kNotifyDeletePhotoAfterMs = 60000;
 
+// The avatar of whoever wrote has to exist on disk as a plain PNG for as long
+// as the system notification shows it - the notification is drawn by the
+// operating system and can only be handed a file. The two ways out of that
+// folder are a timeout and a graceful exit, and a crash, a kill or a power cut
+// takes neither: what is left behind is a picture of a contact, unencrypted,
+// with no expiry and nothing that will ever come back for it.
+//
+// This is the third way out, taken while no notification of this client's own
+// is pending. The only other .png in that folder is the reply-button icon the
+// Windows manager draws for itself, which is written again the next time it is
+// needed; everything else there - a calendar event, a tray icon - has another
+// extension and is left alone. The emergency wipe already empties the whole
+// folder for the same reason (novagram/nova_pin.cpp, EmptiedOnWipe); this is
+// the ordinary case of it.
+void ClearLeftoverUserpics() {
+	const auto dir = QDir(cWorkingDir() + u"tdata/temp"_q);
+	const auto left = dir.entryInfoList(
+		QStringList{ u"*.png"_q },
+		QDir::Files);
+	for (const auto &entry : left) {
+		QFile(entry.absoluteFilePath()).remove();
+	}
+}
+
 } // namespace
 
 QImage GenerateUserpic(not_null<PeerData*> peer, Ui::PeerUserpicView &view) {
@@ -34,6 +58,7 @@ QImage GenerateUserpic(not_null<PeerData*> peer, Ui::PeerUserpicView &view) {
 CachedUserpics::CachedUserpics()
 : _clearTimer([=] { clear(); }) {
 	QDir().mkpath(cWorkingDir() + u"tdata/temp"_q);
+	ClearLeftoverUserpics();
 }
 
 CachedUserpics::~CachedUserpics() {
@@ -45,6 +70,10 @@ CachedUserpics::~CachedUserpics() {
 		// This works about 1200ms on Windows for a folder with one image O_o
 		//base::Platform::DeleteDirectory(cWorkingDir() + u"tdata/temp"_q);
 	}
+
+	// Not the same list: an entry whose file was written but whose Image was
+	// dropped along the way is only reachable through the folder.
+	ClearLeftoverUserpics();
 }
 
 QString CachedUserpics::get(

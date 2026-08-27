@@ -51,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "main/main_session.h"
+#include "novagram/nova_read_status.h"
 #include "apiwrap.h"
 #include "settings/sections/settings_premium.h"
 #include "window/themes/window_theme.h"
@@ -973,6 +974,24 @@ void SetupUnreadMentionsMenu(
 		const auto peer = thread->peer();
 		const auto topic = thread->asTopic();
 		const auto rootId = topic ? topic->rootId() : 0;
+		if (NovaGram::ReadStatusPendingFor(peer)) {
+			// Not decided yet, so nothing is touched at all - neither the
+			// server nor the counter of this client - and the same click works
+			// once the answer is there. A receipt that was not sent can still
+			// be sent, a sent one cannot be recalled (I2).
+			done();
+			return;
+		} else if (NovaGram::ReadStatusHiddenFor(peer)) {
+			// Reading a mention is a content read: it clears the media unread
+			// flag of the messages it covers, so the "not listened yet" dot
+			// would go away on the other side - the very thing the gate in
+			// ApiWrap::markContentsRead exists to prevent. Marked here and not
+			// sent, the same way that gate does it: the counter goes quiet
+			// while the server keeps thinking the mentions are unread.
+			done();
+			peer->owner().history(peer)->clearUnreadMentionsFor(rootId);
+			return;
+		}
 		using Flag = MTPmessages_ReadMentions::Flag;
 		peer->session().api().request(MTPmessages_ReadMentions(
 			MTP_flags(rootId ? Flag::f_top_msg_id : Flag()),
@@ -1015,6 +1034,26 @@ void SetupUnreadReactionsMenu(
 		const auto sublist = thread->asSublist();
 		const auto peer = thread->peer();
 		const auto rootId = topic ? topic->rootId() : 0;
+		// In a monoforum the request names the channel but carries the user of
+		// the sublist, and it is that user who is on the other end of it, so
+		// the gate is asked about them. Asking about the channel would answer
+		// no every time - a channel never carries a rule of its own.
+		const auto receiptPeer = sublist ? sublist->sublistPeer() : peer;
+		if (NovaGram::ReadStatusPendingFor(receiptPeer)) {
+			done();
+			return;
+		} else if (NovaGram::ReadStatusHiddenFor(receiptPeer)) {
+			// Precautionary rather than proven: nobody is told that their
+			// reaction has been looked at. It is the same shape of
+			// acknowledgement as the mentions above, aimed at the one peer this
+			// dialog is hiding from, and holding it back costs nothing, so the
+			// whole menu answers to one rule instead of three.
+			done();
+			peer->owner().history(peer)->clearUnreadReactionsFor(
+				rootId,
+				sublist);
+			return;
+		}
 		using Flag = MTPmessages_ReadReactions::Flag;
 		peer->session().api().request(MTPmessages_ReadReactions(
 			MTP_flags((rootId ? Flag::f_top_msg_id : Flag(0))
@@ -1060,6 +1099,17 @@ void SetupUnreadPollVotesMenu(
 		const auto topic = thread->asTopic();
 		const auto peer = thread->peer();
 		const auto rootId = topic ? topic->rootId() : 0;
+		if (NovaGram::ReadStatusPendingFor(peer)) {
+			done();
+			return;
+		} else if (NovaGram::ReadStatusHiddenFor(peer)) {
+			// Same as the reactions above: whoever voted is not told that the
+			// vote was seen, so this is kept back for consistency rather than
+			// because a leak was proven through it.
+			done();
+			peer->owner().history(peer)->clearUnreadPollVotesFor(rootId);
+			return;
+		}
 		using Flag = MTPmessages_ReadPollVotes::Flag;
 		peer->session().api().request(MTPmessages_ReadPollVotes(
 			MTP_flags(rootId ? Flag::f_top_msg_id : Flag(0)),

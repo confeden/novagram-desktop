@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_dc_options.h"
 #include "mtproto/mtp_instance.h"
+#include "mtproto/web_proxy/web_proxy_transport.h"
 #include "lang/lang_keys.h"
 #include "history/history.h"
 #include "core/application.h"
@@ -818,6 +819,15 @@ void Account::reset() {
 	};
 	wvclear(_webviewStorageIdBots);
 	wvclear(_webviewStorageIdOther);
+
+	// NovaGram: the Web proxy carrier keeps a third WebView profile, and
+	// upstream never clears it - not here, not anywhere. It is not owned by an
+	// account (there is one per installation, at tdata/wvproxy), so it cannot
+	// join the two above; the module removes it itself, after retiring the
+	// carrier that holds it open. The fork's own sweep - the one in
+	// NovaGram::WipeLocalData() - already reaches the same directory, because
+	// it sits directly under tdata.
+	MTP::WebProxy::Transport::ClearStorage();
 
 	_mapChanged = true;
 	writeMap();

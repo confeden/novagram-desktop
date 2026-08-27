@@ -27,6 +27,11 @@ constexpr auto kInitialVideoQuality = 480; // Start with SD.
 constexpr auto kMinIvZoom = 25;
 constexpr auto kMaxIvZoom = 400;
 
+// NovaGram: marks that the fork's "off" default for _translateChatEnabled has
+// already been forced onto a profile written by an older build.
+constexpr auto kTranslateChatDefaultAppliedKey
+	= "novagram_translate_chat_default_applied"_cs;
+
 [[nodiscard]] int DefaultIvZoom() {
 	const auto exact = cScale() * 100 / cScreenScale();
 	const auto snap10 = ((exact + 5) / 10) * 10;
@@ -1303,6 +1308,16 @@ void Settings::addFromSerialized(const QByteArray &serialized) {
 	_chatFiltersHorizontal = (chatFiltersHorizontal == 1);
 	_quickDialogAction = Dialogs::Ui::QuickDialogAction(quickDialogAction);
 	_notificationsVolume = notificationsVolume;
+
+	// NovaGram: the fork turns message language recognition off by default,
+	// but a settings file written by an earlier build carries upstream's "on"
+	// and would keep handing received text to the Windows ELS service for
+	// ever. Force it off once, record that it was done, and never touch it
+	// again - so switching it back on in Settings > Language sticks.
+	if (!readPref<bool>(kTranslateChatDefaultAppliedKey)) {
+		writePref<bool>(kTranslateChatDefaultAppliedKey, true);
+		_translateChatEnabled = false;
+	}
 }
 
 void Settings::clearPref(std::string_view key) {

@@ -151,6 +151,7 @@ private:
 	void readTill(MsgId tillId, HistoryItem *tillIdItem);
 	void checkReadTillEnd();
 	void sendReadTillRequest();
+	void holdReadTillRequest(not_null<PeerData*> receiptPeer);
 	void reloadUnreadCountIfNeeded();
 
 	[[nodiscard]] bool buildFromData(not_null<Viewer*> viewer);
@@ -191,6 +192,10 @@ private:
 	base::Timer _readRequestTimer;
 	mtpRequestId _readRequestId = 0;
 	MsgId _sentReadTill = 0;
+
+	// Set once a receipt of this sublist has been withheld by NovaGram, so the
+	// stream that retries it is subscribed to only once.
+	bool _novaReadHeld = false;
 
 	bool _restorePinnedWhenNonEmpty = false;
 

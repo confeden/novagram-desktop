@@ -1984,6 +1984,9 @@ void Application::refreshGlobalProxy() {
 		? proxySettings.selected()
 		: MTP::ProxyData();
 	if (proxy.type == MTP::ProxyData::Type::Web && proxy.valid()) {
+		// Called unconditionally at every start, including the decoy's. The
+		// decoy gate is inside Activate(), at the module's single entry point,
+		// and not here - see the comment there (I4).
 		MTP::WebProxy::Transport::Activate(proxy);
 	} else {
 		MTP::WebProxy::Transport::Deactivate();

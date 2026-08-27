@@ -14,9 +14,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "mtproto/web_proxy/web_proxy_frame.h"
 #include "mtproto/web_proxy/web_proxy_webview.h"
+#include "novagram/nova_decoy.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QCryptographicHash>
+#include <QtCore/QDir>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
@@ -29,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QTcpServer>
 #include <QtNetwork/QTcpSocket>
+#include <crl/crl_async.h>
 #include <crl/crl_time.h>
 #include <rpl/event_stream.h>
 
@@ -1807,6 +1810,18 @@ void Transport::Activate(const ProxyData &proxy) {
 	Expects(proxy.type == ProxyData::Type::Web);
 	Expects(proxy.valid());
 
+	// NovaGram: the decoy promises that a cold start opens nothing of its own,
+	// and this transport would open two things before any account exists - a
+	// hidden WebView that fetches a page from the proxy host, and a loopback
+	// listener for the browser fallback. The gate is here, at the module's
+	// single entry point, and not at the caller in
+	// Application::refreshGlobalProxy(), because everything else in this file
+	// needs global.active to be set first (I4). Decoy::Active() reads a marker
+	// that is cached for the process, so it is safe this early.
+	if (NovaGram::Decoy::Active()) {
+		return;
+	}
+
 	auto &global = Global();
 	const auto changed = (global.active != proxy);
 	if (!global.transport) {
@@ -1880,6 +1895,32 @@ void Transport::Shutdown() {
 	global.closingWebviews.clear();
 	global.transport = nullptr;
 	global.thread = nullptr;
+}
+
+void Transport::ClearStorage() {
+	Expects(QThread::currentThread() == QCoreApplication::instance()->thread());
+
+	auto &global = Global();
+	if (global.webview && global.transport) {
+		// Retires the live carrier and, while a Web proxy is still configured,
+		// schedules a fresh one through the ordinary retry path - clearing the
+		// profile must not leave the remaining accounts without a connection.
+		global.transport->webviewFailed(global.webviewGeneration);
+	}
+	const auto path = StoragePath();
+
+	// RetireWebview() only lets the carrier go after kWebviewCloseGrace, and
+	// the WebView2 host process releases the profile a little later still, so
+	// the removal waits instead of racing it. The retry scheduled above is at
+	// least kWebviewRetryMinTimeout away, which leaves the window free.
+	QTimer::singleShot(
+		int(kWebviewCloseGrace * 4),
+		QCoreApplication::instance(),
+		[=] {
+			crl::async([=] {
+				QDir(path).removeRecursively();
+			});
+		});
 }
 
 Transport *Transport::Instance() {
