@@ -2135,7 +2135,7 @@ void Application::RegisterUrlScheme() {
 		// fork-named value in RegisteredApplications (and the "open link"
 		// chooser) behind, so it is removed first — the check that guards
 		// Unregister matches only while the old name is still in place.
-		const auto fork = QString::fromUtf8(AppName.utf8());
+		const auto fork = NovaGram::ForkAppName();
 		base::Platform::UnregisterUrlScheme(
 			descriptor(u"tg"_q, u"Telegram Link"_q, fork));
 		base::Platform::UnregisterUrlScheme(

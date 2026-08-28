@@ -17,9 +17,17 @@ namespace {
 constexpr auto kReleaseTag = "v7.1.3/12.10.1";
 constexpr auto kProjectUrl = "https://github.com/confeden/Novagram";
 
-// The base application's own name, i.e. the value ::AppName held before the
-// fork renamed it. The decoy wears it so that every label built from the name
-// reads as a stock Telegram Desktop install instead of exposing the fork.
+// The name the application shows. It lives here and not in core/version.h,
+// where ::AppName is: that file is generated and committed, so every upstream
+// merge brings back upstream's copy of it and would silently undo the rename.
+// ::AppName therefore stays "Telegram Desktop" and keeps its other job, which
+// is naming data paths and OS-level identifiers - the download folder, the
+// registered application - none of which may move when the fork renames itself.
+constexpr auto kAppName = "NovaGram";
+
+// The base application's own name. The decoy wears it so that every label built
+// from the name reads as a stock Telegram Desktop install instead of exposing
+// the fork.
 constexpr auto kDecoyAppName = "Telegram Desktop";
 
 } // namespace
@@ -31,7 +39,11 @@ QString AppName() {
 	// the disguise costs the decoy no access to its own installed copy.
 	return Decoy::Active()
 		? QString::fromUtf8(kDecoyAppName)
-		: QString::fromUtf8(::AppName.utf8());
+		: QString::fromUtf8(kAppName);
+}
+
+QString ForkAppName() {
+	return QString::fromUtf8(kAppName);
 }
 
 QString WithAppName(QString text) {

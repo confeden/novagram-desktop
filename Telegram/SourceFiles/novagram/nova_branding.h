@@ -9,7 +9,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace NovaGram {
 
+// What the application calls itself on screen: the fork name normally, the
+// stock one while the decoy is armed. Display only — every data path and
+// OS-level identifier keeps the base name, so wearing the disguise costs the
+// decoy no access to its own installed copy, and renaming costs no profile.
 [[nodiscard]] QString AppName();
+
+// The fork name, whatever the decoy is doing. Needed exactly where the decoy
+// has to undo something an ordinary run wrote under the fork name — it cannot
+// ask AppName() for that, because while the decoy is armed AppName() answers
+// with the disguise and the undo would miss its target.
+[[nodiscard]] QString ForkAppName();
 
 // Upstream language packs spell the application name inside whole phrases, so
 // a fork cannot rename itself by changing a constant. Rewriting the finished
