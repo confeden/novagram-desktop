@@ -44,11 +44,25 @@ namespace {
 constexpr auto kEnabledKey = "novagram_device_lock"_cs;
 
 constexpr auto kFileMagic = quint32(0x4E56444C); // NVDL
-// Version 2 appended the "a pin is armed here" flag. Version 1 files are still
-// read - rejecting them would put every existing installation on the "another
-// device" screen - and are lifted to 2 by the first write.
-constexpr auto kFileVersion = qint32(2);
-constexpr auto kFileVersionMin = qint32(1);
+// The version deliberately stays 1 while the file has grown a trailing "a pin
+// is armed here" flag. Bumping it to 2 was tried and reverted: an older build
+// rejects any version it does not know, and its reader stops at the fields it
+// knows without looking for trailing bytes - so a bump makes the file
+// unreadable to it, while an appended field is simply ignored. That matters
+// because a downgrade is reachable in practice (a rolled-back release, a
+// reinstall of an older one), and an unreadable binding file does not put the
+// old build on the "another device" screen: it falls through to a first-run
+// intro, i.e. an installation that looks empty while its data sits untouched
+// on the disk. The flag's absence is therefore expressed by the file ending,
+// not by a version number.
+constexpr auto kFileVersion = qint32(1);
+
+// A version 2 was written for a while before the paragraph above was
+// understood, and files carrying it exist. Reading has to keep accepting them
+// or those installations meet the "another device" screen for no reason -
+// which is the same silent-looking failure this whole arrangement exists to
+// avoid, just pointed the other way.
+constexpr auto kFileVersionRead = qint32(2);
 
 // Prefix of a wrapped local key. It sits in front of a value that used to be
 // raw ciphertext, whose first bytes are an AES-IGE key fingerprint, so a
@@ -474,26 +488,28 @@ std::optional<bool> GlobalPinArmed;
 	stream >> magic >> version >> enabled >> backend >> material;
 	if (stream.status() != QDataStream::Ok
 		|| magic != kFileMagic
-		|| version < kFileVersionMin
-		|| version > kFileVersion) {
+		|| version < kFileVersion
+		|| version > kFileVersionRead) {
 		// A binding file that cannot be parsed counts as a foreign one. The
 		// opposite - quietly rebinding - would hand a thief a way to skip the
 		// check by corrupting one file.
 		LOG(("NovaGram device lock: the binding file is not readable"));
 		return Binding{ .state = State::Foreign };
 	}
-	if (version >= 2) {
+	if (stream.atEnd()) {
+		// Written before the flag existed. Unknown, not "no pin was ever set":
+		// the first read of tdata/novagram_pin lifts it to the truth.
+		GlobalPinArmed = std::nullopt;
+	} else {
 		auto armed = qint32(0);
 		stream >> armed;
 		if (stream.status() != QDataStream::Ok) {
+			// Bytes are there but not a whole field, which is corruption
+			// rather than an older file - those end cleanly.
 			LOG(("NovaGram device lock: the binding file is truncated"));
 			return Binding{ .state = State::Foreign };
 		}
 		GlobalPinArmed = (armed != 0);
-	} else {
-		// Written before the flag existed. Unknown, not "no pin was ever set":
-		// the first read of tdata/novagram_pin lifts it to the truth.
-		GlobalPinArmed = std::nullopt;
 	}
 	const auto fingerprint = MachineFingerprint();
 	if (!enabled) {
