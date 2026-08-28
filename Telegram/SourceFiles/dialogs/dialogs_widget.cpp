@@ -64,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/ui_integration.h"
 #include "core/shortcuts.h"
+#include "novagram/nova_stories.h"
 #include "novagram/nova_update.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -1794,6 +1795,18 @@ void Widget::setupStories() {
 		session().data().stories().loadMore(currentSource());
 	}, lifetime());
 
+	// NovaGram: the switch has to land without a restart, and the rings are the
+	// reason. The strip is re-decided here, but every userpic already on screen
+	// asked hasActiveStories() once and cached the answer in its row, so the
+	// list is told to redraw as well.
+	NovaGram::StoriesHiddenChanges(
+	) | rpl::on_next([=] {
+		updateStoriesVisibility();
+		if (_inner) {
+			_inner->update();
+		}
+	}, lifetime());
+
 	_stories->toggleExpandedRequests(
 	) | rpl::on_next([=](bool expanded) {
 		const auto position = _scroll->position();
@@ -2778,6 +2791,13 @@ void Widget::updateStoriesVisibility() {
 		|| (widthAnimation && !suggestionsAnimation)
 		|| _childList
 		|| _stories->empty()
+		// NovaGram: the gate belongs here and not on the widget, because
+		// hiding the strip is not enough on its own - the list keeps a virtual
+		// overscroll gap to expand into, and the pull-down gesture would bring
+		// the row straight back up. Answering "hidden" instantly takes the
+		// branch below that puts the scroll back on Real overscroll, so the
+		// gap goes with the row.
+		|| NovaGram::StoriesHidden()
 		|| (pulledDown && hiddenAnimated);
 	const auto hidden = hiddenInstant || hiddenAnimated;
 	const auto changed = (_stories->toggledHidden() != hidden);

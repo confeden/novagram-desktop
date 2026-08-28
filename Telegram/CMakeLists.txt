@@ -1681,6 +1681,8 @@ PRIVATE
     novagram/nova_seal.h
     novagram/nova_settings.cpp
     novagram/nova_settings.h
+    novagram/nova_stories.cpp
+    novagram/nova_stories.h
     novagram/nova_update.cpp
     novagram/nova_update.h
 

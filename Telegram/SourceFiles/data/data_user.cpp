@@ -37,6 +37,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_peer_photo.h"
 #include "apiwrap.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_stories.h"
 #include "window/notifications_manager.h"
 
 namespace {
@@ -227,12 +228,17 @@ void UserData::setPrivateForwardName(const QString &name) {
 	_privateForwardName = name;
 }
 
+// NovaGram: answered here rather than at PeerData, which only forwards to this
+// - the ring painters, the chat-list row and the profile top bar reach for the
+// user directly and would walk past a gate one level up. The flag itself is
+// left alone: the story is still delivered and still counted, and switching the
+// setting back off has to bring the ring back without a reconnect.
 bool UserData::hasActiveStories() const {
-	return flags() & Flag::HasActiveStories;
+	return !NovaGram::StoriesHidden() && (flags() & Flag::HasActiveStories);
 }
 
 bool UserData::hasUnreadStories() const {
-	return flags() & Flag::HasUnreadStories;
+	return !NovaGram::StoriesHidden() && (flags() & Flag::HasUnreadStories);
 }
 
 bool UserData::hasActiveVideoStream() const {

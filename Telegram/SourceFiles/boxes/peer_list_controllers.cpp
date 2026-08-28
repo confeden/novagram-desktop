@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
+#include "novagram/nova_stories.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_community.h"
@@ -566,6 +567,15 @@ void PeerListStories::updateFor(uint64 id, Counts counts) {
 void PeerListStories::process(not_null<PeerListRow*> row) {
 	const auto user = row->peer()->asUser();
 	if (!user) {
+		return;
+	}
+	// NovaGram: gating hasActiveStories() is not enough here. Every count below
+	// prefers the loaded source and only falls back to the peer flags, so a user
+	// whose stories this session had already fetched would keep a ring in the
+	// contacts list and the forward picker. The video-stream flag has no gated
+	// fallback at all. Zero the whole row instead of the sources of it.
+	if (NovaGram::StoriesHidden()) {
+		applyForRow(row, { 0, 0, false }, true);
 		return;
 	}
 	const auto stories = &_session->data().stories();

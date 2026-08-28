@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_session.h"
 #include "mtproto/mtproto_config.h"
+#include "novagram/nova_stories.h"
 #include "apiwrap.h"
 #include "mainwidget.h"
 #include "styles/style_dialogs.h"
@@ -335,12 +336,16 @@ void Folder::updateStoriesCount(int count, int unread) {
 	++_chatListViewVersion;
 }
 
+// NovaGram: the archive keeps the stories the user chose to hide, and both the
+// folder row's ring and the "show the archive in the main menu" condition are
+// decided by these two counts. Answering zero drops both; the counts themselves
+// are still maintained, so nothing has to be refetched when the setting goes off.
 int Folder::storiesCount() const {
-	return _storiesCount;
+	return NovaGram::StoriesHidden() ? 0 : _storiesCount;
 }
 
 int Folder::storiesUnreadCount() const {
-	return _storiesUnreadCount;
+	return NovaGram::StoriesHidden() ? 0 : _storiesUnreadCount;
 }
 
 TimeId Folder::adjustedChatListTimeId() const {

@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_chat_invite.h"
 #include "api/api_invite_links.h"
 #include "apiwrap.h"
+#include "novagram/nova_stories.h"
 #include "storage/storage_account.h"
 #include "ui/unread_badge.h"
 #include "window/notifications_manager.h"
@@ -1214,12 +1215,13 @@ const Data::AllowedReactions &ChannelData::allowedReactions() const {
 	return _allowedReactions;
 }
 
+// NovaGram: the channel twin of the gate in UserData - same reason, same place.
 bool ChannelData::hasActiveStories() const {
-	return flags() & Flag::HasActiveStories;
+	return !NovaGram::StoriesHidden() && (flags() & Flag::HasActiveStories);
 }
 
 bool ChannelData::hasUnreadStories() const {
-	return flags() & Flag::HasUnreadStories;
+	return !NovaGram::StoriesHidden() && (flags() & Flag::HasUnreadStories);
 }
 
 bool ChannelData::hasActiveVideoStream() const {

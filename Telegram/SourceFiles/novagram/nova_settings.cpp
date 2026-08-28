@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_pin_box.h"
 #include "novagram/nova_read_status.h"
 #include "novagram/nova_screen_guard.h"
+#include "novagram/nova_stories.h"
 #include "settings/settings_common_session.h"
 #include "ui/layers/generic_box.h"
 #include "ui/ui_utility.h"
@@ -650,6 +651,24 @@ void FillFiles(not_null<Ui::VerticalLayout*> container) {
 	Ui::AddDividerText(container, rpl::single(StripMetadataAbout()));
 }
 
+void FillStories(not_null<Ui::VerticalLayout*> container) {
+	const auto russian = UseRussianTexts();
+
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(russian ? u"Истории"_q : u"Stories"_q));
+
+	AddToggle(
+		container,
+		StoriesHiddenTitle(),
+		StoriesHidden(),
+		[](bool toggled) { SetStoriesHidden(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(StoriesHiddenAbout()));
+}
+
 [[nodiscard]] QString NotifyPreviewsAbout() {
 	return UseRussianTexts()
 		? u"Текст сообщения в push кладёт сервер Telegram, а не клиент. "
@@ -970,6 +989,7 @@ void NovaGramSection::setupContent() {
 		FillFiles(container);
 		FillNotifications(container, controller);
 		FillSending(container);
+		FillStories(container);
 		if (!Decoy::Active()) {
 			// The decoy never checks for updates and must not offer a row
 			// that would name the fork by its release page.
