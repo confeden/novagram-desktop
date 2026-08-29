@@ -30,8 +30,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 // themselves. That server is their choice, it may well use a private CA, and
 // pinning ours to it would only make the feature unusable. See nova_doh.cpp.
 //
-// To refresh: connect to each endpoint, build the chain, export the roots. The
-// procedure and the fingerprints below are recorded in docs/doh.md.
+// To refresh: connect to each endpoint, build the chain, export the roots. Which
+// root belongs to which endpoint, and why there are ten rather than four, is
+// recorded in docs/NOVAGRAM.md, section 4.5.
 
 namespace NovaGram::Doh {
 
