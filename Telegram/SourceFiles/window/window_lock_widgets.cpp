@@ -211,14 +211,29 @@ void PasscodeLockWidget::setupNovaDeviceBlocked() {
 	_submit.destroy();
 	_logout.destroy();
 
+	// Two screens, not one. The verdict may be an answer - the key was applied
+	// and did not fit - or it may be the machine failing to say anything this
+	// time, and only the first of those may offer the button that deletes.
+	const auto certain = NovaGram::DeviceLock::ForeignCertain();
 	_novaDeviceText = Ui::CreateChild<Ui::FlatLabel>(
 		this,
-		NovaGram::DeviceLock::BlockedText(),
+		(certain
+			? NovaGram::DeviceLock::BlockedText()
+			: NovaGram::DeviceLock::UnsureText()),
 		st::passcodeSystemUnlockLater);
 	_novaDeviceReset = Ui::CreateChild<Ui::RoundButton>(
 		this,
-		rpl::single(NovaGram::DeviceLock::BlockedResetButton()),
+		rpl::single(certain
+			? NovaGram::DeviceLock::BlockedResetButton()
+			: NovaGram::DeviceLock::UnsureRetryButton()),
 		st::passcodeSubmit);
+	if (!certain) {
+		// Asking again means asking DPAPI again, and the network library has
+		// already been handed whatever answer this start got, so the honest
+		// retry is a restart rather than a re-check inside this process.
+		_novaDeviceReset->setClickedCallback([=] { Core::Restart(); });
+		return;
+	}
 	_novaDeviceReset->setClickedCallback([=] {
 		const auto russian = NovaGram::UseRussianTexts();
 		window()->show(Ui::MakeConfirmBox({
@@ -379,7 +394,9 @@ void PasscodeLockWidget::paintContent(QPainter &p) {
 				_novaDeviceText->y() - st::passcodeHeaderHeight,
 				width(),
 				st::passcodeHeaderHeight),
-			NovaGram::DeviceLock::BlockedTitle(),
+			(NovaGram::DeviceLock::ForeignCertain()
+				? NovaGram::DeviceLock::BlockedTitle()
+				: NovaGram::DeviceLock::UnsureTitle()),
 			style::al_center);
 		return;
 	}

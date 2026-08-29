@@ -98,6 +98,12 @@ bool GlobalDiskWrapped/* = false*/;
 // and lets the next write recreate it, and the flag has to ride through that.
 std::optional<bool> GlobalPinArmed;
 
+// Whether the last Foreign verdict was an answer or the safe reply to a
+// question that could not be asked. The screen that verdict opens offers one
+// irreversible button, and a machine having a bad minute is no reason to show
+// it - the same distinction the Android half needed, for the same reason.
+bool GlobalForeignUnsure = false;
+
 [[nodiscard]] QByteArray FingerprintInfo() {
 	return QByteArray("NovaGram device binding v1");
 }
@@ -169,9 +175,14 @@ std::optional<bool> GlobalPinArmed;
 	return result;
 }
 
+// `error` receives what Windows said when it refused. The caller needs it:
+// ERROR_INVALID_DATA is DPAPI saying "this blob was not protected by this user
+// on this machine", which is an answer, and every other code is the call
+// failing to happen, which is not.
 [[nodiscard]] QByteArray DpapiUnprotect(
 		const QByteArray &data,
-		const QByteArray &entropy) {
+		const QByteArray &entropy,
+		DWORD *error = nullptr) {
 	auto in = DATA_BLOB{
 		DWORD(data.size()),
 		reinterpret_cast<BYTE*>(const_cast<char*>(data.constData())),
@@ -189,7 +200,13 @@ std::optional<bool> GlobalPinArmed;
 			nullptr,
 			CRYPTPROTECT_UI_FORBIDDEN,
 			&out)) {
+		if (error) {
+			*error = GetLastError();
+		}
 		return QByteArray();
+	}
+	if (error) {
+		*error = ERROR_SUCCESS;
 	}
 	auto result = QByteArray(
 		reinterpret_cast<const char*>(out.pbData),
@@ -471,11 +488,16 @@ std::optional<bool> GlobalPinArmed;
 }
 
 [[nodiscard]] Binding ReadBinding() {
+	// Every path below decides this afresh. Only one of them is an answer.
+	GlobalForeignUnsure = false;
 	auto file = QFile(BindingPath());
 	if (!file.exists()) {
 		return Binding{ .state = State::Fresh };
 	} else if (!file.open(QIODevice::ReadOnly)) {
+		// A lock or a permission, not a statement about which machine sealed
+		// it. Blocked, because running would run over data that may be ours.
 		LOG(("NovaGram device lock: the binding file cannot be opened"));
+		GlobalForeignUnsure = true;
 		return Binding{ .state = State::Foreign };
 	}
 	auto stream = QDataStream(&file);
@@ -490,10 +512,13 @@ std::optional<bool> GlobalPinArmed;
 		|| magic != kFileMagic
 		|| version < kFileVersion
 		|| version > kFileVersionRead) {
-		// A binding file that cannot be parsed counts as a foreign one. The
-		// opposite - quietly rebinding - would hand a thief a way to skip the
-		// check by corrupting one file.
+		// A binding file that cannot be parsed still blocks - the opposite,
+		// quietly rebinding, would hand a thief a way to skip the check by
+		// corrupting one file. But it is not evidence of another machine: it
+		// is a version this build does not know, which is the G39/G40 shape
+		// again, or corruption. Nothing gets destroyed over either.
 		LOG(("NovaGram device lock: the binding file is not readable"));
+		GlobalForeignUnsure = true;
 		return Binding{ .state = State::Foreign };
 	}
 	if (stream.atEnd()) {
@@ -507,6 +532,7 @@ std::optional<bool> GlobalPinArmed;
 			// Bytes are there but not a whole field, which is corruption
 			// rather than an older file - those end cleanly.
 			LOG(("NovaGram device lock: the binding file is truncated"));
+			GlobalForeignUnsure = true;
 			return Binding{ .state = State::Foreign };
 		}
 		GlobalPinArmed = (armed != 0);
@@ -521,6 +547,9 @@ std::optional<bool> GlobalPinArmed;
 		};
 	}
 	if (fingerprint.isEmpty()) {
+		// The machine would not identify itself this time. That says nothing
+		// about who sealed the file.
+		GlobalForeignUnsure = true;
 		return Binding{ .state = State::Foreign };
 	}
 	if (backend == qint32(Backend::Fingerprint)) {
@@ -537,10 +566,19 @@ std::optional<bool> GlobalPinArmed;
 	}
 #ifdef Q_OS_WIN
 	if (backend == qint32(Backend::Dpapi)) {
-		const auto secret = DpapiUnprotect(material, fingerprint);
+		auto error = DWORD(ERROR_SUCCESS);
+		const auto secret = DpapiUnprotect(material, fingerprint, &error);
 		if (secret.size() != kSecretSize) {
-			LOG(("NovaGram device lock: DPAPI refused the stored secret - "
-				"another Windows account, or another machine"));
+			// ERROR_INVALID_DATA is DPAPI having looked and said no: the blob
+			// was protected by another user or another machine. Any other code
+			// is the call not happening - the service unavailable, the profile
+			// not loaded, memory - and answering that with an offer to delete
+			// the account would be destroying data over a bad minute.
+			GlobalForeignUnsure = (error != ERROR_INVALID_DATA);
+			LOG(("NovaGram device lock: DPAPI refused the stored secret, "
+				"error %1%2").arg(error).arg(GlobalForeignUnsure
+					? u" - cannot tell whose this data is"_q
+					: u" - another Windows account, or another machine"_q));
 			return Binding{
 				.state = State::Foreign,
 				.backend = Backend::Dpapi,
@@ -555,8 +593,11 @@ std::optional<bool> GlobalPinArmed;
 		};
 	}
 #endif // Q_OS_WIN
+	// A backend this build does not know is a newer build's file, not another
+	// machine's - the downgrade direction of the same trap.
 	LOG(("NovaGram device lock: the binding uses a mechanism "
 		"this build cannot open"));
+	GlobalForeignUnsure = true;
 	return Binding{ .state = State::Foreign };
 }
 
@@ -898,6 +939,40 @@ QString BlockedText() {
 
 QString BlockedResetButton() {
 	return UseRussianTexts() ? u"Начать заново"_q : u"Start over"_q;
+}
+
+bool ForeignCertain() {
+	// Only when the verdict was actually reached. Blocking for want of an
+	// answer never gets here, so the screen that offers the irreversible
+	// start over is never shown on that basis.
+	return !GlobalForeignUnsure;
+}
+
+QString UnsureTitle() {
+	return UseRussianTexts()
+		? u"Пока не удаётся проверить эти данные"_q
+		: u"These files cannot be checked right now"_q;
+}
+
+QString UnsureText() {
+	return UseRussianTexts()
+		? u"Локальные файлы NovaGram запечатаны ключом этого компьютера, и "
+			"сейчас не удалось выяснить, есть ли здесь этот ключ. Это не то "
+			"же самое, что «ключ не подошёл», поэтому ничего не удаляется и "
+			"ничего не перезаписывается.\n\n"
+			"Чаще всего помогает перезапуск. Если сообщение возвращается "
+			"снова и снова, файлы, скорее всего, действительно с другого "
+			"компьютера."_q
+		: u"The local NovaGram files are sealed with a key belonging to this "
+			"computer, and this time it could not be established whether that "
+			"key is here. That is not the same as the key not fitting, so "
+			"nothing is deleted and nothing is overwritten.\n\n"
+			"A restart usually settles it. If this keeps coming back, the "
+			"files most likely do come from another computer."_q;
+}
+
+QString UnsureRetryButton() {
+	return UseRussianTexts() ? u"Повторить"_q : u"Try again"_q;
 }
 
 QString BackendName(Backend backend) {

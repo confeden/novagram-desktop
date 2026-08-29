@@ -135,6 +135,16 @@ void Forget();
 [[nodiscard]] QString BlockedTitle();
 [[nodiscard]] QString BlockedText();
 [[nodiscard]] QString BlockedResetButton();
+
+// Whether "this belongs to another device" is an answer or only the safe reply
+// to a question that could not be asked. A DPAPI call that never happened, a
+// file version this build does not know and a machine that would not identify
+// itself all look exactly like a foreign data folder from the outside - and
+// none of them is a reason to offer to destroy an account.
+[[nodiscard]] bool ForeignCertain();
+[[nodiscard]] QString UnsureTitle();
+[[nodiscard]] QString UnsureText();
+[[nodiscard]] QString UnsureRetryButton();
 [[nodiscard]] QString BackendName(Backend backend);
 
 } // namespace NovaGram::DeviceLock
