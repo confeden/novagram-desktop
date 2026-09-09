@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt_signal_producer.h"
 #include "boxes/about_box.h"
 #include "boxes/connection_box.h"
+#include "core/update_channel.h"
 #include "boxes/peer_list_controllers.h"
 #include "boxes/premium_preview_box.h"
 #include "calls/group/calls_group_common.h"
@@ -397,12 +398,15 @@ MainMenu::MainMenu(
 		NovaGram::AppName(),
 		decoy ? u"https://desktop.telegram.org"_q : NovaGram::ProjectUrl()));
 	_telegram->setLinksTrusted();
+	// The canary version is too long for the "Version {version}" form.
 	_version->setMarkedText(
 		tr::link(
-			tr::lng_settings_current_version(
-				tr::now,
-				lt_version,
-				currentVersionText()),
+			Core::BuildIsCanary
+				? currentVersionShortText()
+				: tr::lng_settings_current_version(
+					tr::now,
+					lt_version,
+					currentVersionShortText()),
 			1) // Link 1.
 		.append(QChar(' '))
 		.append(QChar(8211))
@@ -1051,7 +1055,7 @@ void MainMenu::setupSwipe() {
 	}
 
 	auto update = [=](Ui::Controls::SwipeContextData data) {
-		if (data.translation < 0) {
+		if (data.visualTranslation() < 0) {
 			if (!_swipeBackData.callback) {
 				_swipeBackData = Ui::Controls::SetupSwipeBack(
 					this,
@@ -1070,7 +1074,7 @@ void MainMenu::setupSwipe() {
 	};
 
 	auto init = [=](Ui::Controls::SwipeHandlerInitData data) {
-		if (data.direction != Qt::LeftToRight) {
+		if (data.fingerDirection() != Qt::LeftToRight) {
 			return Ui::Controls::SwipeHandlerFinishData();
 		}
 		if (_emojiStatusPanel && _emojiStatusPanel->hasFocus()) {

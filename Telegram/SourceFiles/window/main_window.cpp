@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/localstorage.h"
 #include "platform/platform_specific.h"
 #include "ui/platform/ui_platform_window.h"
+#include "ui/platform/ui_platform_window_title.h"
 #include "platform/platform_window_title.h"
 #include "history/history.h"
 #include "info/media/info_media_widget.h" // SharedMediaTitle.
@@ -25,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_pin_policy.h"
 #include "core/sandbox.h"
 #include "core/shortcuts.h"
+#include "core/update_channel.h"
 #include "lang/lang_keys.h"
 #include "data/data_session.h"
 #include "data/data_forum_topic.h"
@@ -36,6 +38,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/confirm_box.h"
 #include "ui/toast/toast.h"
 #include "ui/widgets/shadow.h"
+#include "ui/controls/title_sub_widget.h"
 #include "ui/controls/window_outdated_bar.h"
 #include "ui/controls/window_screen_reader_bar.h"
 #include "ui/painter.h"
@@ -565,6 +568,9 @@ void MainWindow::init() {
 		}, lifetime());
 	}
 	refreshTitleWidget();
+	if constexpr (Core::BuildIsCanary) {
+		setupCanaryTitleLabel();
+	}
 
 	updateTitle();
 	updateWindowIcon();
@@ -687,6 +693,39 @@ void MainWindow::refreshTitleWidget() {
 		setNativeFrame(false);
 		_titleShadow.destroy();
 	}
+}
+
+void MainWindow::setupCanaryTitleLabel() {
+	const auto title = titleWidget();
+	if (!title) {
+		return;
+	}
+	const auto layout = Ui::Platform::TitleControlsLayout::Instance();
+	const auto label = Ui::CreateTitleSubWidget(
+		title,
+		st::titleSubWidgetStyle,
+		rpl::single(Core::CanaryTitleLabel()),
+		layout->value(
+		) | rpl::map([](const Ui::Platform::TitleLayout &layout) {
+			return layout.onLeft() ? style::al_right : style::al_left;
+		}),
+		additionalContentPaddingValue());
+	label->lifetime().add([layout] {});
+
+	title->shownValue(
+	) | rpl::skip(1) | rpl::on_next([=] {
+		updateTitle();
+	}, lifetime());
+}
+
+QString MainWindow::nativeTitleSuffix() const {
+	if constexpr (Core::BuildIsCanary) {
+		const auto title = titleWidget();
+		if (!title || title->isHidden()) {
+			return u" \u2022 "_q + Core::CanaryTitleLabel();
+		}
+	}
+	return QString();
 }
 
 void MainWindow::updateMinimumSize() {
@@ -851,6 +890,7 @@ void MainWindow::updateTitle() {
 		return;
 	}
 
+	const auto suffix = nativeTitleSuffix();
 	const auto settings = Core::App().settings().windowTitleContent();
 	const auto locked = Core::App().passcodeLocked();
 	const auto counter = settings.hideTotalUnread
@@ -867,7 +907,7 @@ void MainWindow::updateTitle() {
 		? TitleFromSeparateSharedMedia(settings, session->windowId())
 		: QString();
 	if (!separateSharedMediaTitle.isEmpty()) {
-		setTitle(separateSharedMediaTitle);
+		setTitle(separateSharedMediaTitle + suffix);
 		return;
 	}
 	const auto key = (session && !settings.hideChatName)
@@ -875,7 +915,7 @@ void MainWindow::updateTitle() {
 		: Dialogs::Key();
 	const auto thread = key ? key.thread() : nullptr;
 	if (!thread) {
-		setTitle((user.isEmpty() ? u"Telegram"_q : user) + added);
+		setTitle((user.isEmpty() ? u"Telegram"_q : user) + added + suffix);
 		return;
 	}
 	const auto history = thread->owningHistory();
@@ -895,7 +935,7 @@ void MainWindow::updateTitle() {
 		: !added.isEmpty()
 		? u" \u2013"_q
 		: QString();
-	setTitle(primary + middle + added);
+	setTitle(primary + middle + added + suffix);
 }
 
 QRect MainWindow::computeDesktopRect() const {
@@ -903,13 +943,14 @@ QRect MainWindow::computeDesktopRect() const {
 }
 
 void MainWindow::savePosition(Qt::WindowState state) {
+	if (!isVisible() || !positionInited()) {
+		return;
+	}
+
 	if (state == Qt::WindowActive) {
 		state = windowHandle()->windowState();
 	}
-
-	if (state == Qt::WindowMinimized
-		|| !isVisible()
-		|| !positionInited()) {
+	if (state == Qt::WindowMinimized) {
 		return;
 	}
 	if (const auto saved = Core::App().savedWindows()) {
