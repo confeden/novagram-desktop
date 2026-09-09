@@ -92,6 +92,106 @@ bool ParseLocation(const QString &text, QString &channel, int &postId) {
 	return true;
 }
 
+// NovaGram: the manifest numbers its languages with QLocale::Language
+// values as *Qt 6* orders that enum - Telegram/build/update_dictionaries.py
+// hardcodes them, and the comment there calling them "stable across Qt 5/6"
+// is wrong. This build is Qt 5.15 (N10), where 96 is Russian and not Greek,
+// 31 is English and not 75. Read as plain numbers the ids name a different
+// language for almost every entry, and with DESKTOP_APP_USE_HUNSPELL_ONLY
+// there is no system spellchecker to fall back on: a Russian client
+// downloaded el_GR into tdata/dictionaries/ru_RU, never found ru_RU.dic
+// there, and so re-downloaded it on every keyboard switch while underlining
+// nothing, ever.
+//
+// So an id is not taken as a number but as a language: each one is paired
+// with the locale it stands for, and that locale is resolved into whatever
+// the running Qt calls it. Keep this table in sync with LANGUAGES in
+// update_dictionaries.py; a language missing from it is skipped here, and
+// only skipped, which is the one safe way to be wrong.
+struct ManifestLanguage {
+	int id = 0;
+	const char *locale = nullptr;
+};
+
+constexpr ManifestLanguage kManifestLanguages[] = {
+	{ 75, "en_US" },
+	{ 45, "bg_BG" },
+	{ 48, "ca_ES" },
+	{ 67, "cs_CZ" },
+	{ 316, "cy_GB" },
+	{ 68, "da_DK" },
+	{ 94, "de_DE" },
+	{ 96, "el_GR" },
+	{ 75015, "en_AU" },
+	{ 75041, "en_CA" },
+	{ 75246, "en_GB" },
+	{ 270, "es_ES" },
+	{ 78, "et_EE" },
+	{ 228, "fa_IR" },
+	{ 85, "fr_FR" },
+	{ 103, "he_IL" },
+	{ 105, "hi_IN" },
+	{ 66, "hr_HR" },
+	{ 107, "hu_HU" },
+	{ 17, "hy_AM" },
+	{ 112, "id_ID" },
+	{ 119, "it_IT" },
+	{ 142, "ko_KR" },
+	{ 160, "lt_LT" },
+	{ 155, "lv_LV" },
+	{ 209, "nb_NO" },
+	{ 72, "nl_NL" },
+	{ 230, "pl_PL" },
+	{ 231, "pt_BR" },
+	{ 231188, "pt_PT" },
+	{ 235, "ro_RO" },
+	{ 239, "ru_RU" },
+	{ 262, "sk_SK" },
+	{ 263, "sl_SI" },
+	{ 9, "sq_AL" },
+	{ 275, "sv_SE" },
+	{ 283, "ta_IN" },
+	{ 282, "tg_TJ" },
+	{ 298, "tr_TR" },
+	{ 303, "uk_UA" },
+	{ 310, "vi_VN" },
+	{ 90, "gl_ES" },
+	{ 252, "sr_Cyrl_RS" },
+};
+
+[[nodiscard]] int LocalLanguageId(int manifestId) {
+	const auto i = ranges::find(
+		kManifestLanguages,
+		manifestId,
+		&ManifestLanguage::id);
+	if (i != ranges::end(kManifestLanguages)) {
+		const auto name = QString::fromLatin1(i->locale);
+		const auto locale = QLocale(name);
+		const auto language = locale.language();
+		// QLocale answers with the *default* locale for a name it does not
+		// know, so a typo above would quietly relabel a dictionary as the
+		// system language - the exact failure this whole function exists to
+		// undo. Make it prove the answer belongs to the name that was asked.
+		if (language != QLocale::C
+			&& language != QLocale::AnyLanguage
+			&& locale.name().startsWith(name.left(2))) {
+			return LanguageFromLocale(locale);
+		}
+		LOG(("Spellcheck Error: no locale for manifest language %1 (%2)."
+			).arg(manifestId).arg(name));
+		return 0;
+	}
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	// A language added to the manifest after this table was written. Under
+	// Qt 6 its number already means what the manifest says it means.
+	return manifestId;
+#else
+	LOG(("Spellcheck Warning: manifest language %1 is unknown here, skipped."
+		).arg(manifestId));
+	return 0;
+#endif // Qt >= 6.0.0
+}
+
 std::vector<Dict> ParseManifest(const QByteArray &bytes) {
 	auto result = std::vector<Dict>();
 	auto err = QJsonParseError();
@@ -106,7 +206,7 @@ std::vector<Dict> ParseManifest(const QByteArray &bytes) {
 	for (const auto &v : list) {
 		const auto obj = v.toObject();
 		auto d = Dict();
-		d.id = obj.value(u"id"_q).toInt();
+		d.id = LocalLanguageId(obj.value(u"id"_q).toInt());
 		d.size = int64(obj.value(u"size"_q).toDouble());
 		d.name = obj.value(u"name"_q).toString();
 		const auto location = obj.value(u"location"_q).toString();
@@ -425,6 +525,19 @@ bool UnpackDictionary(const QString &path, int langId) {
 			if (dir.exists(from) && !dir.exists(to)) {
 				QFile::rename(dir.filePath(from), dir.filePath(to));
 			}
+		}
+	}
+	// NovaGram: anything here under another name is not this dictionary,
+	// and nothing will ever look it up - the loader only ever opens
+	// <folder name>.dic/.aff. Profiles written before LocalLanguageId()
+	// hold one: the wrong archive unpacked into the right folder, 13 MB of
+	// Greek sitting in ru_RU. Sweep it when the correct one lands.
+	const auto expected = Spellchecker::LocaleFromLangId(langId).name();
+	const auto dir = QDir(folder);
+	for (const auto &entry : dir.entryInfoList(QDir::Files)) {
+		if (IsGoodPartName(entry.fileName())
+			&& entry.completeBaseName() != expected) {
+			QFile::remove(entry.absoluteFilePath());
 		}
 	}
 	return true;

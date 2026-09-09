@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_pin.h"
+#include "novagram/nova_settings.h"
 #include "main/main_session_settings.h"
 #include "mtproto/mtproto_config.h"
 #include "settings/sections/settings_advanced.h"
@@ -794,17 +795,27 @@ void MainMenu::setupMenu() {
 		}
 	}, _nightThemeToggle->lifetime());
 
-	// Right under the night mode. The proxy box is what someone whose
-	// connection has just been cut reaches for, and stock Telegram keeps it
-	// three levels deep, in Settings > Advanced > Connection type. The row
-	// opens the same box, it is only closer.
-	//
-	// Hidden in the decoy, like the settings section is: the criterion here
-	// is not "does it say NovaGram out loud" but "does this drawer read as an
-	// ordinary Telegram", and no Telegram build has a proxy row here. In the
-	// decoy the box would also be useless - the network is cut, so nothing it
-	// saved could ever connect.
+	// Two fork rows, right under the night mode, both hidden in the decoy.
+	// The criterion for hiding them is not "does it say NovaGram out loud"
+	// but "does this drawer read as an ordinary Telegram" - and no Telegram
+	// build has either row here.
 	if (!NovaGram::Decoy::Active()) {
+		// The fork's own section, and the only way into it: it used to be a
+		// row in the settings list, between Privacy and Chat settings, where
+		// it took two taps and sat among a dozen stock entries. It is what
+		// this build exists for, so it opens from the drawer instead.
+		addAction(
+			rpl::single(NovaGram::SettingsSectionTitle()),
+			{ &st::menuIconAntispam }
+		)->setClickedCallback([=] {
+			controller->showSettings(NovaGram::SettingsSectionId());
+		});
+
+		// The proxy box is what someone whose connection has just been cut
+		// reaches for, and stock Telegram keeps it three levels deep, in
+		// Settings > Advanced > Connection type. The row opens the same box,
+		// it is only closer. In the decoy it would also be useless - the
+		// network is cut, so nothing it saved could ever connect.
 		addAction(
 			rpl::single(NovaGram::UseRussianTexts()
 				? u"Прокси"_q
