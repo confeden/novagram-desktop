@@ -70,6 +70,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_ttl_validator.h"
 #include "novagram/nova_autodelete.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_drop_incoming.h"
 #include "novagram/nova_erase.h"
 #include "novagram/nova_muted_members.h"
 #include "novagram/nova_read_status.h"
@@ -328,6 +329,7 @@ private:
 	void addThemeEdit();
 	void addNovaAutoDelete();
 	void addNovaReadStatus();
+	void addNovaDropIncoming();
 	void addNovaEraseEvidence();
 	void addToggleNoForwards();
 	void addBlockUser();
@@ -1614,6 +1616,28 @@ void Filler::addNovaReadStatus() {
 	}, &st::menuIconMarkRead);
 }
 
+void Filler::addNovaDropIncoming() {
+	// Directly under the read-status entry and shown under the same condition:
+	// dropping what the other side sends is offered only where the receipts
+	// are already withheld, and it means nothing without them. Kept out of the
+	// decoy for the same reason as every other fork-only entry.
+	if (!_peer
+		|| NovaGram::Decoy::Active()
+		|| !NovaGram::DropIncomingOffered(_peer)) {
+		return;
+	}
+	const auto peer = _peer;
+	const auto show = _controller->uiShow();
+	const auto active = NovaGram::DropIncomingActive(peer);
+	_addAction(active
+		? NovaGram::DropIncomingStopTitle()
+		: NovaGram::DropIncomingTitle(), [=] {
+		show->showBox(Box([=](not_null<Ui::GenericBox*> box) {
+			NovaGram::DropIncomingBox(box, peer);
+		}));
+	}, (active ? &st::menuIconCancel : &st::menuIconBlock));
+}
+
 void Filler::addNovaEraseEvidence() {
 	// No fork-only entry may appear in the decoy: this one is shown for every
 	// peer, so without an explicit check it turns the disguise into a plain
@@ -2002,6 +2026,7 @@ void Filler::fillHistoryActions() {
 	addThemeEdit();
 	addNovaAutoDelete();
 	addNovaReadStatus();
+	addNovaDropIncoming();
 	addNovaEraseEvidence();
 	addToggleNoForwards();
 	addViewDiscussion();

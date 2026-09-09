@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history.h"
+#include "novagram/nova_drop_incoming.h"
 
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
@@ -615,6 +616,17 @@ std::vector<not_null<HistoryItem*>> History::createItems(
 	for (auto i = data.cend(), e = data.cbegin(); i != e;) {
 		const auto &data = *--i;
 		const auto id = IdFromMessage(data);
+		// NovaGram: what a history fetch brings is the same message arriving
+		// by the other road, so it is turned back here too - otherwise the
+		// dialog would hand back on scroll exactly what the intake dropped,
+		// and an answer that switches the dropping off would bring the whole
+		// pile with it.
+		if (NovaGram::DropsIncoming(
+				peer,
+				id,
+				(FlagsFromMessage(data) & MTPDmessage::Flag::f_out))) {
+			continue;
+		}
 		if ((id.bare == 1) && (data.type() == mtpc_messageEmpty)) {
 			// The first message of channels should be a service message
 			// about its creation. But if channel auto-cleaning is enabled,
@@ -2295,6 +2307,14 @@ bool History::useMyUnreadInParent() const {
 void History::setUnreadCount(int newUnreadCount) {
 	Expects(folderKnown());
 
+	if (newUnreadCount > 0 && NovaGram::DropIncomingActive(peer)) {
+		// NovaGram: the server goes on counting what this client threw away,
+		// so without this the chat list would show a badge climbing over
+		// messages the user cannot open - the one thing the switch promises
+		// will not happen. Local only: nothing is read back to the server, and
+		// no receipt is sent to bring the count down honestly.
+		newUnreadCount = 0;
+	}
 	if (_unreadCount == newUnreadCount) {
 		return;
 	}

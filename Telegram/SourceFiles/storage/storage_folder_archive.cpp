@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "storage/storage_folder_archive.h"
+#include "novagram/nova_metadata.h"
 
 #include "platform/platform_file_utilities.h"
 #include "ui/chat/attach/attach_prepare.h"
@@ -359,6 +360,39 @@ void FillEntryDate(const QDateTime &modified, zip_fileinfo *result) {
 			break;
 		}
 		if (!entry.directory) {
+			// NovaGram: a folder dropped into a chat is zipped here and sent
+			// as one application/zip, so the JPEG/PNG scrub that sits in
+			// FileLoadTask never sees what is inside. Cleaned bytes come back
+			// for an entry it applies to, and those are written instead of
+			// the file being streamed; everything else takes the road below,
+			// untouched (G45).
+			const auto cleaned = NovaGram::StripArchiveEntry(
+				entry.absolute,
+				entry.name,
+				entry.size);
+			if (!cleaned.isEmpty()) {
+				if (zipWriteInFileInZip(
+						zip,
+						cleaned.constData(),
+						uInt(cleaned.size())) != ZIP_OK) {
+					finish = Status::Failed;
+				} else {
+					state.processed += entry.size;
+					if (!StepProgress(state)) {
+						finish = Status::Cancelled;
+					} else if (io.writtenSize() > limit) {
+						finish = Status::TooLarge;
+					}
+				}
+				if (finish != Status::Done) {
+					break;
+				}
+				if (zipCloseFileInZip(zip) != ZIP_OK) {
+					finish = Status::Failed;
+					break;
+				}
+				continue;
+			}
 			auto file = QFile(entry.absolute);
 			if (!file.open(QIODevice::ReadOnly)) {
 				finish = Status::Failed;

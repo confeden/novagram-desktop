@@ -299,4 +299,31 @@ QByteArray StripImageMetadata(const QByteArray &bytes) {
 	return bytes;
 }
 
+QByteArray StripArchiveEntry(
+		const QString &path,
+		const QString &name,
+		int64 size) {
+	// The whole entry is held in memory to be cleaned, so the cap is the one
+	// the send path already uses for the same reason.
+	constexpr auto kMaxArchiveEntryBytes = int64(256 * 1024 * 1024);
+	if (!StripMetadataEnabledForTask()
+		|| (size <= 0)
+		|| (size > kMaxArchiveEntryBytes)
+		|| !CanStripMetadata(QString(), name)) {
+		return QByteArray();
+	}
+	auto file = QFile(path);
+	if (!file.open(QIODevice::ReadOnly)) {
+		return QByteArray();
+	}
+	const auto bytes = file.read(kMaxArchiveEntryBytes + 1);
+	if (bytes.isEmpty()
+		|| (bytes.size() > kMaxArchiveEntryBytes)
+		|| JpegNeedsRotation(bytes)) {
+		return QByteArray();
+	}
+	auto cleaned = StripImageMetadata(bytes);
+	return (cleaned.size() != bytes.size()) ? cleaned : QByteArray();
+}
+
 } // namespace NovaGram

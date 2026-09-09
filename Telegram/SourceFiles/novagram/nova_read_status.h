@@ -71,6 +71,40 @@ void NoteHeldRead(not_null<History*> history, MsgId tillId);
 // The furthest position written down by NoteHeldRead, or zero.
 [[nodiscard]] MsgId HeldReadTill(not_null<History*> history);
 
+// Where the dialogs that drop what the other side sends are written down.
+//
+// Kept in the same sealed blob as the rules rather than in a preference of its
+// own: it is the same kind of secret - a list of the people being ignored -
+// and it has to be taken back by the same door the hiding is, which is
+// RevealReadStatus below. The switch itself lives in nova_drop_incoming.h;
+// these three are its storage.
+//
+// A range is one spell of dropping. `open` means it is the current one and
+// goes on to whatever arrives next; `till` is the newest id it has actually
+// dropped, so closing a range leaves behind exactly what was thrown away and
+// not a promise about the future. Closed ranges are kept, and that is the
+// whole point: an answer in the dialog switches the dropping off, and without
+// them everything it dropped would come back from the server the next time
+// the history is opened - the very flood the switch was turned on to avoid.
+struct DropRange {
+	MsgId from = 0;
+	MsgId till = 0;
+	bool open = false;
+};
+[[nodiscard]] std::vector<DropRange> ReadStatusDropRanges(
+	not_null<PeerData*> peer);
+void SetReadStatusDropRanges(
+	not_null<PeerData*> peer,
+	std::vector<DropRange> ranges);
+
+// Closes the open range at the newest id it dropped. The one door out, used by
+// the switch and by RevealReadStatus alike.
+void CloseReadStatusDropRange(not_null<PeerData*> peer);
+
+// Moves the newest dropped id of the open range forward; saving is debounced
+// the same way the held read position is.
+void NoteReadStatusDropped(not_null<PeerData*> peer, MsgId id);
+
 // Stops hiding in this dialog and sends out the receipt that was held
 // back. There is no way back: the receipt reaches the server and the
 // other side sees the change. Any non-service message the user sends to

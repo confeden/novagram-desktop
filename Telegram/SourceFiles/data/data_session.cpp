@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_session.h"
+#include "novagram/nova_drop_incoming.h"
 
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
@@ -3604,6 +3605,19 @@ HistoryItem *Session::addNewMessage(
 		NewMessageType type) {
 	const auto peerId = PeerFromMessage(data);
 	if (!peerId || data.type() == mtpc_messageEmpty) {
+		return nullptr;
+	}
+
+	// NovaGram: a dialog that drops what the other side sends never lets the
+	// message become an item, which is what keeps it out of the storage, off
+	// the screen and out of the notifications - all three start here. Nothing
+	// is sent to the server about it: dropping is local, and the receipt this
+	// dialog would owe is withheld by the read-status rule that had to be on
+	// for the switch to be offered at all.
+	if (NovaGram::DropsIncoming(
+			peer(peerId),
+			id,
+			(FlagsFromMessage(data) & MTPDmessage::Flag::f_out))) {
 		return nullptr;
 	}
 

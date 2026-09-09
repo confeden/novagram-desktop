@@ -39,6 +39,23 @@ void SetStripMetadataEnabled(bool enabled);
 // not one of the two, so the caller can always assign the result.
 [[nodiscard]] QByteArray StripImageMetadata(const QByteArray &bytes);
 
+// One entry of an archive this client builds out of the user's own files.
+//
+// Upstream v7.2.6 added "drop a folder into a chat": the files are zipped here
+// and uploaded as one application/zip, which is not a format the scrub above
+// knows - so every photo inside would travel with its Exif while the same
+// photo dropped on its own is cleaned. The archive writer asks this for every
+// entry and writes what comes back instead of streaming the file.
+//
+// Answers empty - meaning "send the file as it is" - when the setting is off,
+// when the entry is not a JPEG or a PNG, when it is too big to hold in memory,
+// when the JPEG says it has to be rotated first (stripping would cut off the
+// note that says so and send it sideways), or when nothing was removed.
+[[nodiscard]] QByteArray StripArchiveEntry(
+	const QString &path,
+	const QString &name,
+	int64 size);
+
 // True when the JPEG says it has to be rotated before it is looked at.
 //
 // The orientation lives in the Exif block, which is exactly what stripping

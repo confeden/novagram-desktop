@@ -42,13 +42,20 @@ constexpr auto kMagic = quint32(0x4E565253);
 // Version 2 names the account the rules belong to, version 3 remembers that
 // the dialogs which were already there have been written down, version 4 also
 // remembers how old they were, version 5 keeps the read position held back in
-// each hidden dialog. Blobs written by the older versions are still read as
+// each hidden dialog, version 6 the ranges in which a dialog drops what the
+// other side sends. Blobs written by the older versions are still read as
 // they are: dropping them would send exactly the receipts the user was
 // promised would not be sent, and a rule made by the older, too eager logic
 // can be removed per dialog from the note above the chat.
-constexpr auto kVersion = qint32(5);
+constexpr auto kVersion = qint32(6);
 constexpr auto kMinVersion = qint32(1);
 constexpr auto kStateKey = "novagram_read_status"_cs;
+
+// Spells of dropping remembered per dialog. Four is already generous - the
+// switch goes off by itself as soon as the user answers - and when there are
+// more the two oldest are merged into one span rather than forgotten, because
+// forgetting a range hands back what was thrown away.
+constexpr auto kDropRangesLimit = 4;
 
 // The date written down when the baseline was taken over a chat list that held
 // nothing datable at all. Nothing is older than it, so no dialog is taken for
@@ -78,6 +85,11 @@ struct State {
 	// here and not in History, because History takes its read position from
 	// the server at every start and the server was never told this one.
 	base::flat_map<PeerId, MsgId> heldReadTill;
+
+	// The spells of dropping everything the other side sends, per dialog.
+	// Only ever written for a dialog whose rule is Hidden, and thrown away
+	// with it.
+	base::flat_map<PeerId, std::vector<DropRange>> dropRanges;
 
 	[[nodiscard]] bool baselineTaken() const {
 		return (baselineDate != 0);
@@ -152,6 +164,36 @@ struct State {
 			result.heldReadTill.emplace(PeerId(peerId), MsgId(tillId));
 		}
 	}
+	if (version >= 6) {
+		auto dialogs = qint32(0);
+		stream >> dialogs;
+		if (stream.status() != QDataStream::Ok || dialogs < 0) {
+			return State();
+		}
+		for (auto i = 0; i != dialogs; ++i) {
+			auto peerId = quint64(0);
+			auto count = qint32(0);
+			stream >> peerId >> count;
+			if (stream.status() != QDataStream::Ok
+				|| count <= 0
+				|| count > kDropRangesLimit) {
+				return State();
+			}
+			auto ranges = std::vector<DropRange>();
+			ranges.reserve(count);
+			for (auto j = 0; j != count; ++j) {
+				auto from = qint64(0);
+				auto till = qint64(0);
+				auto open = qint32(0);
+				stream >> from >> till >> open;
+				if (stream.status() != QDataStream::Ok || from <= 0) {
+					return State();
+				}
+				ranges.push_back({ MsgId(from), MsgId(till), (open != 0) });
+			}
+			result.dropRanges.emplace(PeerId(peerId), std::move(ranges));
+		}
+	}
 	// A blob of version 1 or 2 keeps its rules and leaves the baseline
 	// untaken, so the dialogs that are there when the chat list next arrives
 	// are written down as older ones, and the rules made before stay as they
@@ -176,6 +218,15 @@ void WriteState(not_null<Main::Session*> session, const State &state) {
 		<< qint32(state.heldReadTill.size());
 	for (const auto &[peerId, tillId] : state.heldReadTill) {
 		stream << quint64(peerId.value) << qint64(tillId.bare);
+	}
+	stream << qint32(state.dropRanges.size());
+	for (const auto &[peerId, ranges] : state.dropRanges) {
+		stream << quint64(peerId.value) << qint32(ranges.size());
+		for (const auto &range : ranges) {
+			stream << qint64(range.from.bare)
+				<< qint64(range.till.bare)
+				<< qint32(range.open ? 1 : 0);
+		}
 	}
 	session->local().writePref<QByteArray>(kStateKey, blob);
 }
@@ -239,6 +290,10 @@ public:
 	// held back. Both ways in end here - the button of the note above the chat
 	// and an answer written in the dialog - so that the two behave alike.
 	void reveal(not_null<PeerData*> peer);
+	[[nodiscard]] std::vector<DropRange> dropRanges(PeerId peerId) const;
+	void setDropRanges(PeerId peerId, std::vector<DropRange> ranges);
+	void closeDropRange(PeerId peerId);
+	void noteDropped(PeerId peerId, MsgId id);
 
 	void noteHeldRead(PeerId peerId, MsgId tillId);
 
@@ -616,6 +671,12 @@ void Watcher::reveal(not_null<PeerData*> peer) {
 	// other means, so the wait is over.
 	const auto wasPending = _pending.remove(id);
 	const auto wasHidden = (i != end(_state.rules));
+	// Dropping what the other side sends is allowed only while this dialog is
+	// one the user never answered in, and answering is exactly what brings the
+	// code here - from a message, from a reaction, or from the box. So the
+	// open range is closed here, through the one door both switches are lifted
+	// by. The closed ranges stay: what they dropped must not come back.
+	closeDropRange(id);
 	change([&](State &state) {
 		state.rules[id] = Rule::Revealed;
 	});
@@ -639,6 +700,52 @@ void Watcher::reveal(not_null<PeerData*> peer) {
 			state.heldReadTill.remove(id);
 		});
 	}
+}
+
+std::vector<DropRange> Watcher::dropRanges(PeerId peerId) const {
+	const auto i = _state.dropRanges.find(peerId);
+	return (i != end(_state.dropRanges))
+		? i->second
+		: std::vector<DropRange>();
+}
+
+void Watcher::setDropRanges(PeerId peerId, std::vector<DropRange> ranges) {
+	while (ranges.size() > kDropRangesLimit) {
+		const auto second = ranges.begin() + 1;
+		second->from = std::min(second->from, ranges.front().from);
+		second->till = std::max(second->till, ranges.front().till);
+		ranges.erase(ranges.begin());
+	}
+	change([&](State &state) {
+		if (ranges.empty()) {
+			state.dropRanges.remove(peerId);
+		} else {
+			state.dropRanges[peerId] = std::move(ranges);
+		}
+	});
+}
+
+void Watcher::closeDropRange(PeerId peerId) {
+	auto ranges = dropRanges(peerId);
+	if (ranges.empty() || !ranges.back().open) {
+		return;
+	}
+	ranges.back().open = false;
+	if (ranges.back().till < ranges.back().from) {
+		// Nothing ever arrived while it was on, so there is nothing to
+		// remember about it.
+		ranges.pop_back();
+	}
+	setDropRanges(peerId, std::move(ranges));
+}
+
+void Watcher::noteDropped(PeerId peerId, MsgId id) {
+	auto ranges = dropRanges(peerId);
+	if (ranges.empty() || !ranges.back().open || ranges.back().till >= id) {
+		return;
+	}
+	ranges.back().till = id;
+	setDropRanges(peerId, std::move(ranges));
 }
 
 void Watcher::noteHeldRead(PeerId peerId, MsgId tillId) {
@@ -762,6 +869,33 @@ void ForgetReadStatusRule(not_null<PeerData*> peer) {
 
 void RevealReadStatus(not_null<PeerData*> peer) {
 	Get(&peer->session()).reveal(peer);
+}
+
+std::vector<DropRange> ReadStatusDropRanges(not_null<PeerData*> peer) {
+	// Deliberately not Get(): this is asked for every message that arrives,
+	// and a watcher that was never started drops nothing.
+	if (const auto watcher = Find(&peer->session())) {
+		return watcher->dropRanges(peer->id);
+	}
+	return {};
+}
+
+void SetReadStatusDropRanges(
+		not_null<PeerData*> peer,
+		std::vector<DropRange> ranges) {
+	Get(&peer->session()).setDropRanges(peer->id, std::move(ranges));
+}
+
+void CloseReadStatusDropRange(not_null<PeerData*> peer) {
+	if (const auto watcher = Find(&peer->session())) {
+		watcher->closeDropRange(peer->id);
+	}
+}
+
+void NoteReadStatusDropped(not_null<PeerData*> peer, MsgId id) {
+	if (const auto watcher = Find(&peer->session())) {
+		watcher->noteDropped(peer->id, id);
+	}
 }
 
 namespace {
