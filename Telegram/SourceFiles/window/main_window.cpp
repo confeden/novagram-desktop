@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "window/main_window.h"
 
+#include "novagram/nova_icon_design.h"
+
 #include "api/api_updates.h"
 #include "storage/localstorage.h"
 #include "platform/platform_specific.h"
@@ -138,11 +140,22 @@ const char kOptionNewWindowsSizeAsFirst[] = "new-windows-size-as-first";
 const char kOptionDisableTouchbar[] = "touchbar-disabled";
 
 const QImage &Logo() {
+	// NovaGram: the mark is drawn from the chosen design rather than taken
+	// from the shipped picture - and this is the one place to do it, because
+	// every part of the application that shows its own icon asks here: the
+	// window, the taskbar, the tray, the built-in notifications. A design that
+	// was never touched answers null and the shipped file is used.
+	if (const auto custom = NovaGram::IconDesign::LogoImage(true)) {
+		return *custom;
+	}
 	static const auto result = QImage(u":/gui/art/logo_256.png"_q);
 	return result;
 }
 
 const QImage &LogoNoMargin() {
+	if (const auto custom = NovaGram::IconDesign::LogoImage(false)) {
+		return *custom;
+	}
 	static const auto result = QImage(u":/gui/art/logo_256_no_margin.png"_q);
 	return result;
 }

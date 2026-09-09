@@ -1676,6 +1676,8 @@ PRIVATE
     novagram/nova_muted_members.h
     novagram/nova_read_status.cpp
     novagram/nova_read_status.h
+    novagram/nova_icon_design.cpp
+    novagram/nova_icon_design.h
     novagram/nova_keypad.cpp
     novagram/nova_keypad.h
     novagram/nova_marquee_button.cpp

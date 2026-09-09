@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_device_lock.h"
 #include "novagram/nova_filenames.h"
+#include "novagram/nova_icon_design.h"
 #include "novagram/nova_marquee_button.h"
 #include "novagram/nova_metadata.h"
 #include "novagram/nova_update.h"
@@ -37,8 +38,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
+#include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "tray.h"
 #include "window/notifications_manager.h"
 #include "window/window_session_controller.h"
 #include "styles/style_menu_icons.h"
@@ -652,6 +655,150 @@ void FillFiles(not_null<Ui::VerticalLayout*> container) {
 	Ui::AddDividerText(container, rpl::single(StripMetadataAbout()));
 }
 
+// One row of the icon picker: a name on the left, the current value on the
+// right between two arrows. Arrows rather than a list, because the three axes
+// are walked rather than searched - the point is to see what changes, and the
+// preview above answers that before anything is applied.
+void AddDesignRow(
+		not_null<Ui::VerticalLayout*> container,
+		const QString &label,
+		Fn<QString()> value,
+		Fn<void(int)> shift,
+		Fn<void()> changed) {
+	const auto row = container->add(
+		object_ptr<Ui::FixedHeightWidget>(
+			container,
+			st::settingsButtonNoIcon.height));
+	const auto name = Ui::CreateChild<Ui::FlatLabel>(
+		row,
+		label,
+		st::defaultFlatLabel);
+	const auto current = Ui::CreateChild<Ui::FlatLabel>(
+		row,
+		value(),
+		st::defaultFlatLabel);
+	const auto prev = Ui::CreateChild<Ui::RoundButton>(
+		row,
+		rpl::single(QString::fromUtf8("\xe2\x80\xb9")),
+		st::defaultLightButton);
+	const auto next = Ui::CreateChild<Ui::RoundButton>(
+		row,
+		rpl::single(QString::fromUtf8("\xe2\x80\xba")),
+		st::defaultLightButton);
+	const auto step = [=](int delta) {
+		shift(delta);
+		current->setText(value());
+		changed();
+	};
+	prev->setClickedCallback([=] { step(-1); });
+	next->setClickedCallback([=] { step(1); });
+
+	row->sizeValue(
+	) | rpl::on_next([=](QSize size) {
+		const auto padding = st::settingsButtonNoIcon.padding;
+		const auto skip = st::defaultVerticalListSkip;
+		const auto top = [&](not_null<Ui::RpWidget*> widget) {
+			return (size.height() - widget->height()) / 2;
+		};
+		name->moveToLeft(padding.left(), top(name), size.width());
+		const auto right = size.width() - padding.right();
+		next->moveToLeft(right - next->width(), top(next), size.width());
+		// The value is centred in what is left between the two arrows, so a
+		// long name and a short one do not make the arrows jump about.
+		const auto valueRight = right - next->width() - skip;
+		const auto valueLeft = valueRight - current->width();
+		current->moveToLeft(valueLeft, top(current), size.width());
+		prev->moveToLeft(
+			valueLeft - skip - prev->width(),
+			top(prev),
+			size.width());
+	}, row->lifetime());
+}
+
+void FillIcon(not_null<Ui::VerticalLayout*> container) {
+	using IconDesign::Design;
+
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(IconDesign::SectionTitle()));
+
+	struct State {
+		Design draft;
+	};
+	const auto state = container->lifetime().make_state<State>();
+	state->draft = IconDesign::Current();
+
+	const auto side = 108;
+	const auto skip = st::defaultVerticalListSkip;
+	const auto preview = container->add(
+		object_ptr<Ui::FixedHeightWidget>(container, side + 2 * skip));
+	preview->paintRequest(
+	) | rpl::on_next([=] {
+		const auto ratio = style::DevicePixelRatio();
+		auto image = IconDesign::Render(state->draft, side * ratio, false);
+		image.setDevicePixelRatio(ratio);
+		auto p = QPainter(preview);
+		p.drawImage(
+			QRect((preview->width() - side) / 2, skip, side, side),
+			image);
+	}, preview->lifetime());
+
+	const auto refresh = [=] { preview->update(); };
+	const auto wrap = [](int value, int count) {
+		return ((value % count) + count) % count;
+	};
+	AddDesignRow(
+		container,
+		IconDesign::StyleLabel(),
+		[=] { return IconDesign::StyleName(state->draft.style); },
+		[=](int delta) {
+			state->draft.style = wrap(
+				state->draft.style + delta,
+				IconDesign::kStyles);
+		},
+		refresh);
+	AddDesignRow(
+		container,
+		IconDesign::TextureLabel(),
+		[=] { return IconDesign::TextureName(state->draft.texture); },
+		[=](int delta) {
+			state->draft.texture = wrap(
+				state->draft.texture + delta,
+				IconDesign::kTextures);
+		},
+		refresh);
+	AddDesignRow(
+		container,
+		IconDesign::AccentLabel(),
+		[=] { return IconDesign::AccentName(state->draft.accent); },
+		[=](int delta) {
+			state->draft.accent = wrap(
+				state->draft.accent + delta,
+				IconDesign::kAccents);
+		},
+		refresh);
+
+	Ui::AddSkip(container);
+	const auto russian = UseRussianTexts();
+	const auto apply = container->add(
+		object_ptr<Ui::SettingsButton>(
+			container,
+			rpl::single(russian ? u"Применить"_q : u"Apply"_q),
+			st::settingsButtonNoIcon));
+	apply->setClickedCallback([=] {
+		IconDesign::SetCurrent(state->draft);
+		// The window and the taskbar take the icon from the application, the
+		// tray keeps its own copy - so both are told, and neither waits for a
+		// restart.
+		Core::App().refreshApplicationIcon();
+		Core::App().tray().updateIconCounters();
+	});
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(IconDesign::SectionAbout()));
+}
+
 void FillStickers(not_null<Ui::VerticalLayout*> container) {
 	const auto russian = UseRussianTexts();
 
@@ -1010,6 +1157,7 @@ void NovaGramSection::setupContent() {
 		FillSending(container);
 		FillStickers(container);
 		FillStories(container);
+		FillIcon(container);
 		if (!Decoy::Active()) {
 			// The decoy never checks for updates and must not offer a row
 			// that would name the fork by its release page.
