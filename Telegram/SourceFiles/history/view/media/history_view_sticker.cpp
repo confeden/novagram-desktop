@@ -34,6 +34,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_click_handler.h"
 #include "data/data_file_origin.h"
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_menu_icons.h"
@@ -188,6 +189,10 @@ bool Sticker::readyToDrawAnimationFrame() {
 
 	ensureDataMediaCreated();
 	_dataMedia->checkStickerLarge();
+	if (NovaGram::CrashStickers::Blocked(_dataMedia.get())) {
+		// No player is built for a refused sticker, so nothing decodes it.
+		return false;
+	}
 	const auto loaded = _dataMedia->loaded();
 	const auto waitingForPremium = hasPremiumEffect()
 		&& _dataMedia->videoThumbnailContent().isEmpty();
@@ -244,6 +249,13 @@ void Sticker::draw(
 	}
 
 	ensureDataMediaCreated();
+	if (NovaGram::CrashStickers::Blocked(_dataMedia.get())) {
+		// Drawn here rather than left to the plate that DocumentMedia hands
+		// out: this is the size the bubble actually gives the sticker, so the
+		// words are laid out for it instead of being scaled from a square.
+		NovaGram::CrashStickers::PaintPlaceholder(p, r);
+		return;
+	}
 	if (readyToDrawAnimationFrame()) {
 		paintAnimationFrame(p, context, r);
 	} else if (!_data->sticker()

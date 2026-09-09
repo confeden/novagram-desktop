@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_pin_box.h"
 #include "novagram/nova_read_status.h"
 #include "novagram/nova_screen_guard.h"
+#include "novagram/nova_crash_stickers.h"
 #include "novagram/nova_stories.h"
 #include "settings/settings_common_session.h"
 #include "ui/layers/generic_box.h"
@@ -651,6 +652,24 @@ void FillFiles(not_null<Ui::VerticalLayout*> container) {
 	Ui::AddDividerText(container, rpl::single(StripMetadataAbout()));
 }
 
+void FillStickers(not_null<Ui::VerticalLayout*> container) {
+	const auto russian = UseRussianTexts();
+
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(russian ? u"Стикеры"_q : u"Stickers"_q));
+
+	AddToggle(
+		container,
+		CrashStickers::Title(),
+		CrashStickers::Enabled(),
+		[](bool toggled) { CrashStickers::SetEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(container, rpl::single(CrashStickers::About()));
+}
+
 void FillStories(not_null<Ui::VerticalLayout*> container) {
 	const auto russian = UseRussianTexts();
 
@@ -989,6 +1008,7 @@ void NovaGramSection::setupContent() {
 		FillFiles(container);
 		FillNotifications(container, controller);
 		FillSending(container);
+		FillStickers(container);
 		FillStories(container);
 		if (!Decoy::Active()) {
 			// The decoy never checks for updates and must not offer a row

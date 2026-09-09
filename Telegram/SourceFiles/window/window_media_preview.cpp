@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "data/data_document_media.h"
 #include "data/data_document.h"
 #include "data/data_photo_media.h"
@@ -417,6 +418,10 @@ void MediaPreviewWidget::createLottieIfReady(
 		|| !sticker->isLottie()
 		|| _lottie
 		|| !_documentMedia->loaded()) {
+		return;
+	} else if (NovaGram::CrashStickers::Blocked(_documentMedia.get())) {
+		// The preview window is where the pack that started this took the
+		// client down: hovering a sticker is enough to reach here.
 		return;
 	} else if (document->isPremiumSticker()
 		&& _documentMedia->videoThumbnailContent().isEmpty()) {

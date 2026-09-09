@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/compose/compose_show.h"
 #include "chat_helpers/stickers_list_widget.h"
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "data/data_document.h"
@@ -2225,6 +2226,9 @@ void StickerSetBox::Inner::setupLottie(int index) {
 void StickerSetBox::Inner::setupWebm(int index) {
 	auto &element = _elements[index];
 
+	if (NovaGram::CrashStickers::Blocked(element.documentMedia.get())) {
+		return;
+	}
 	const auto document = element.document;
 	auto callback = [=](Media::Clip::Notification notification) {
 		clipCallback(notification, document, index);

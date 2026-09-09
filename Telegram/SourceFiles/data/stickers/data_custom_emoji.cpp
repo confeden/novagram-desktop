@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_channel.h"
 #include "data/data_session.h"
 #include "data/data_document.h"
+#include "novagram/nova_crash_stickers.h"
 #include "data/data_document_media.h"
 #include "data/data_emoji_statuses.h"
 #include "data/data_file_origin.h"
@@ -390,7 +391,15 @@ void CustomEmojiLoader::check() {
 		}
 	};
 	const auto type = document->sticker()->type;
-	auto generator = [=, bytes = Lottie::ReadContent(data, filepath)]()
+	auto content = Lottie::ReadContent(data, filepath);
+	if (NovaGram::CrashStickers::Blocked(document, content)) {
+		// A custom emoji is a sticker document with a smaller box drawn
+		// around it, and it reaches its decoder without passing any of the
+		// sticker paths. Left unloaded rather than replaced: at this size
+		// the words would not be readable anyway.
+		return;
+	}
+	auto generator = [=, bytes = std::move(content)]()
 	-> std::unique_ptr<Ui::FrameGenerator> {
 		switch (type) {
 		case StickerType::Tgs:

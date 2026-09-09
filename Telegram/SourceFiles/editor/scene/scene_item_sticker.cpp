@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "editor/scene/scene_item_sticker.h"
 
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
 #include "data/data_session.h"
@@ -64,6 +65,8 @@ ItemSticker::ItemSticker(
 bool ItemSticker::createPlayer() {
 	const auto stickerData = _document->sticker();
 	if (!stickerData) {
+		return false;
+	} else if (NovaGram::CrashStickers::Blocked(_mediaView.get())) {
 		return false;
 	}
 	if (stickerData->isLottie()) {

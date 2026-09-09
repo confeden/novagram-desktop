@@ -1640,6 +1640,8 @@ PRIVATE
     novagram/nova_branding.h
     novagram/nova_calls.cpp
     novagram/nova_calls.h
+    novagram/nova_crash_stickers.cpp
+    novagram/nova_crash_stickers.h
     novagram/nova_decoy.cpp
     novagram/nova_decoy.h
     novagram/nova_doh.cpp

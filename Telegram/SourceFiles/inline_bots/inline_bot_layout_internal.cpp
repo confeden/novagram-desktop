@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers.h"
 #include "chat_helpers/gifs_list_widget.h" // ChatHelpers::AddGifAction.
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "inline_bots/inline_bot_result.h"
 #include "lottie/lottie_single_player.h"
 #include "media/audio/media_audio.h"
@@ -625,6 +626,9 @@ void Sticker::setupLottie() const {
 void Sticker::setupWebm() const {
 	Expects(_dataMedia != nullptr);
 
+	if (NovaGram::CrashStickers::Blocked(_dataMedia.get())) {
+		return;
+	}
 	const auto that = const_cast<Sticker*>(this);
 	auto callback = [=](Media::Clip::Notification notification) {
 		that->clipCallback(notification);

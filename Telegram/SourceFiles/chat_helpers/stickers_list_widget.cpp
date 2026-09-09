@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h"
 #include "menu/menu_send.h" // SendMenu::FillSendMenu
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "chat_helpers/stickers_list_footer.h"
 #include "ui/controls/tabbed_search.h"
 #include "ui/toast/toast.h"
@@ -2013,6 +2014,9 @@ void StickersListWidget::setupWebm(Set &set, int section, int index) {
 
 	// Document should be loaded already for the animation to be set up.
 	Assert(sticker.documentMedia != nullptr);
+	if (NovaGram::CrashStickers::Blocked(sticker.documentMedia.get())) {
+		return;
+	}
 	const auto setId = set.id;
 	const auto document = sticker.document;
 	auto callback = [=](Media::Clip::Notification notification) {

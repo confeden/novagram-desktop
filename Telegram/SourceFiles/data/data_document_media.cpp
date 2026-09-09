@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/image/svg_preview.h"
 #include "ui/rect.h"
+#include "novagram/nova_crash_stickers.h"
 
 #include <QtCore/QBuffer>
 #include <QtGui/QImageReader>
@@ -286,7 +287,17 @@ void DocumentMedia::checkStickerLarge() {
 		return;
 	}
 	automaticLoad(_owner->stickerSetOrigin(), nullptr);
-	if (data->isAnimated() || !loaded()) {
+	if (!loaded()) {
+		return;
+	} else if (NovaGram::CrashStickers::Blocked(this)) {
+		// The one place every kind of sticker passes, animated ones included:
+		// what is handed out here is the plate that says the sticker was
+		// refused, so a view that never learned about the guard still draws
+		// the words instead of falling back to the outline of the bomb.
+		_sticker = std::make_unique<Image>(
+			NovaGram::CrashStickers::PlaceholderImage(_owner->dimensions));
+		return;
+	} else if (data->isAnimated()) {
 		return;
 	}
 	if (_bytes.isEmpty()) {
@@ -430,6 +441,14 @@ void DocumentMedia::checkStickerLarge(not_null<FileLoader*> loader) {
 	if (_sticker || !_owner->sticker()) {
 		return;
 	}
+	if (NovaGram::CrashStickers::Blocked(this)) {
+		// Asking the loader for imageData is what decodes the file, so the
+		// verdict has to come first: this runs the moment the download ends,
+		// before anything has been drawn.
+		_sticker = std::make_unique<Image>(
+			NovaGram::CrashStickers::PlaceholderImage(_owner->dimensions));
+		return;
+	}
 	if (auto image = loader->imageData(); !image.isNull()) {
 		_sticker = std::make_unique<Image>(std::move(image));
 	}
@@ -453,6 +472,15 @@ void DocumentMedia::GenerateGoodThumbnail(
 		: document->sticker()->isLottie()
 		? FileType::AnimatedSticker
 		: FileType::VideoSticker;
+	if (document->sticker()
+		&& NovaGram::CrashStickers::Blocked(document, data)) {
+		// This runs on a worker thread the moment a sticker arrives, whether
+		// or not anything is going to draw it, and it hands the file straight
+		// to rlottie or to FFmpeg. Nothing else about the sticker has been
+		// decoded by this point, so this is the earliest the guard can speak.
+		document->setGoodThumbnailChecked(false);
+		return;
+	}
 	auto location = document->location().isEmpty()
 		? nullptr
 		: std::make_unique<Core::FileLocation>(document->location());
@@ -546,6 +574,9 @@ auto DocumentIconFrameGenerator(not_null<DocumentMedia*> media)
 	}
 	using Type = StickerType;
 	const auto document = media->owner();
+	if (NovaGram::CrashStickers::Blocked(media)) {
+		return nullptr;
+	}
 	const auto content = media->bytes();
 	const auto fromFile = content.isEmpty();
 	const auto type = document->sticker()

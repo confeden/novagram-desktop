@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_location_factory.h"
 #include "ui/painter.h"
 #include "main/main_session.h"
+#include "novagram/nova_crash_stickers.h"
 
 #include <xxhash.h>
 
@@ -80,6 +81,13 @@ auto LottieFromDocument(
 		uint8 keyShift,
 		QSize box) {
 	const auto document = media->owner();
+	if (NovaGram::CrashStickers::Blocked(media)) {
+		// Every animated sticker in the application is built through here, so
+		// this is the one place the file has to be kept away from rlottie.
+		// The player is given nothing and settles into the state it already
+		// has for a file it could not parse, which every caller draws around.
+		return method(QByteArray(), Lottie::FrameRequest{ box });
+	}
 	const auto data = media->bytes();
 	const auto filepath = document->filepath();
 	if (box.width() * box.height() > kDontCacheLottieAfterArea) {
@@ -162,6 +170,8 @@ bool HasLottieThumbnail(
 	if (const auto info = document->sticker()) {
 		if (!info->isLottie()) {
 			return false;
+		} else if (NovaGram::CrashStickers::Blocked(media)) {
+			return false;
 		}
 		media->automaticLoad(document->stickerSetOrigin(), nullptr);
 		if (!media->loaded()) {
@@ -184,6 +194,8 @@ std::unique_ptr<Lottie::SinglePlayer> LottieThumbnail(
 		? media->owner()->bigFileBaseCacheKey()
 		: Storage::Cache::Key();
 	if (!baseKey) {
+		return nullptr;
+	} else if (media && NovaGram::CrashStickers::Blocked(media)) {
 		return nullptr;
 	}
 	const auto content = thumb
@@ -222,6 +234,8 @@ bool HasWebmThumbnail(
 	if (const auto info = document->sticker()) {
 		if (!info->isWebm()) {
 			return false;
+		} else if (NovaGram::CrashStickers::Blocked(media)) {
+			return false;
 		}
 		media->automaticLoad(document->stickerSetOrigin(), nullptr);
 		if (!media->loaded()) {
@@ -236,6 +250,9 @@ Media::Clip::ReaderPointer WebmThumbnail(
 		Data::StickersSetThumbnailView *thumb,
 		Data::DocumentMedia *media,
 		Fn<void(Media::Clip::Notification)> callback) {
+	if (media && NovaGram::CrashStickers::Blocked(media)) {
+		return {};
+	}
 	return thumb
 		? ::Media::Clip::MakeReader(
 			thumb->content(),

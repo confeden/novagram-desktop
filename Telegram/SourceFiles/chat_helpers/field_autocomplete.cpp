@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/stickers/data_stickers.h"
 #include "menu/menu_send.h" // SendMenu::FillSendMenu
 #include "chat_helpers/stickers_lottie.h"
+#include "novagram/nova_crash_stickers.h"
 #include "chat_helpers/message_field.h" // PrepareMentionTag.
 #include "chat_helpers/tabbed_selector.h" // ChatHelpers::FileChosen.
 #include "mainwindow.h"
@@ -1719,6 +1720,9 @@ void FieldAutocomplete::Inner::setupLottie(StickerSuggestion &suggestion) {
 }
 
 void FieldAutocomplete::Inner::setupWebm(StickerSuggestion &suggestion) {
+	if (NovaGram::CrashStickers::Blocked(suggestion.documentMedia.get())) {
+		return;
+	}
 	const auto document = suggestion.document;
 	auto callback = [=](Media::Clip::Notification notification) {
 		clipCallback(notification, document);
