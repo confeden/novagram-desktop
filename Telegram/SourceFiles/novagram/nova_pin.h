@@ -66,7 +66,17 @@ void ResetFailedAttempts();
 
 // Expects the accounts to be not started yet, so no data file is open. The pin
 // is the one just entered: it unlocks the stored identity for the decoy.
+//
+// With synchronous deauthorization on and a session running, the line that
+// tells the account's other clients is written and acknowledged before any of
+// the destruction starts - so this call returns before the wipe has happened,
+// and the unlock screen it was called from stays up meanwhile.
 void RunEmergencyWipe(const QString &pin);
+
+// The same destruction, asked for by another NovaGram client of this account
+// rather than by a pin typed here. Runs in a signed in session, so it takes
+// the decoy's name and number from the account itself, and it sends nothing.
+void RunSyncedWipe();
 
 // Removes everything under tdata except the scratch directories the running
 // application recreates by itself. Shared with the device lock: both paths

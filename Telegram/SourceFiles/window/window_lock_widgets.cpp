@@ -424,7 +424,13 @@ void PasscodeLockWidget::submit() {
 	// pin exists for. Matching it neither touches the failure counter nor
 	// clears it, so an attacker guessing at it gains nothing either way.
 	if (_novaPinMode && NovaGram::CheckEmergencyPin(entered)) {
-		NovaGram::RunEmergencyWipe(entered); // May destroy this widget.
+		// May destroy this widget - and, with synchronous deauthorization on
+		// and a session running, may instead return while the line that warns
+		// the account's other clients is still on its way. The field is
+		// cleared either way, so that the screen reads as an entry being
+		// checked rather than one that hung with the pin still in it.
+		_passcode->setText(QString());
+		NovaGram::RunEmergencyWipe(entered);
 		return;
 	}
 

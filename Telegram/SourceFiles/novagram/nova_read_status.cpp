@@ -44,11 +44,12 @@ constexpr auto kMagic = quint32(0x4E565253);
 // the dialogs which were already there have been written down, version 4 also
 // remembers how old they were, version 5 keeps the read position held back in
 // each hidden dialog, version 6 the ranges in which a dialog drops what the
-// other side sends. Blobs written by the older versions are still read as
-// they are: dropping them would send exactly the receipts the user was
-// promised would not be sent, and a rule made by the older, too eager logic
-// can be removed per dialog from the note above the chat.
-constexpr auto kVersion = qint32(6);
+// other side sends, version 7 tells a Revealed the client was told from one it
+// only assumed. Blobs written by the older versions are still read as they
+// are: dropping them would send exactly the receipts the user was promised
+// would not be sent, and a rule made by the older, too eager logic can be
+// removed per dialog from the note above the chat.
+constexpr auto kVersion = qint32(7);
 constexpr auto kMinVersion = qint32(1);
 constexpr auto kStateKey = "novagram_read_status"_cs;
 
@@ -67,6 +68,19 @@ constexpr auto kBaselineDateUnknown = TimeId(1);
 enum class Rule : qint32 {
 	Hidden,
 	Revealed,
+	// Written down by the sweep over the dialogs that were already there,
+	// while the one thing that could have told them apart - the bar the server
+	// offers over a stranger who wrote first - had not been asked for. It
+	// behaves like a Revealed that is not final: the gate withholds, and the
+	// first real answer about that peer turns it into one of the two above.
+	//
+	// Its whole reason: the sweep runs when the chat list arrives, and at that
+	// moment barSettings() is unknown for every peer, because the desktop only
+	// asks for it when a conversation is opened. So the sweep used to write
+	// Revealed over every dialog the account already had - including the ones
+	// a stranger had started and the user never answered, which are exactly
+	// the ones the feature is for.
+	Assumed,
 };
 
 struct State {
@@ -125,6 +139,20 @@ struct State {
 			return State();
 		}
 		result.rules.emplace(PeerId(peerId), Rule(rule));
+	}
+	if (version < 7) {
+		// Every Revealed in an older blob may be an assumption: the sweep
+		// wrote them without the answer, and a real reveal - an answer sent,
+		// a reaction, the button of the note - wrote the same value. Asking
+		// again costs one messages.getPeerSettings for each dialog the user
+		// touches and settles both cases correctly, because a dialog the user
+		// has written in shows no stranger bar. A Hidden is never re-asked:
+		// taking one back would send the receipts it held.
+		for (auto &[peerId, rule] : result.rules) {
+			if (rule == Rule::Revealed) {
+				rule = Rule::Assumed;
+			}
+		}
 	}
 	if (version >= 2) {
 		auto ownerId = quint64(0);
@@ -262,6 +290,18 @@ void WriteState(not_null<Main::Session*> session, const State &state) {
 			& (Flag::ReportSpam | Flag::BlockContact | Flag::AddContact));
 }
 
+// What to write down about a dialog that was there before this client started
+// counting. Assumed while the bar has not been asked for, which on the desktop
+// is the normal state of every peer until its conversation is opened - the
+// answer is fetched later, once, for the dialogs the user actually touches.
+[[nodiscard]] Rule RuleFromBar(not_null<PeerData*> peer) {
+	return !peer->barSettings()
+		? Rule::Assumed
+		: StrangerBarShown(peer)
+		? Rule::Hidden
+		: Rule::Revealed;
+}
+
 class Watcher final {
 public:
 	explicit Watcher(not_null<Main::Session*> session);
@@ -275,8 +315,14 @@ public:
 	// whoever hears them looks the watcher up, so it has to be findable first.
 	void start();
 
+	// Assumed counts as undecided: the receipt is held while the answer is
+	// fetched, which is the direction that can be taken back (I2). Held, not
+	// lost - resolveAssumed() fires the update stream, and whoever postponed
+	// the receipt sends it then.
 	[[nodiscard]] bool undecided(PeerId peerId) const {
-		return _pending.contains(peerId);
+		const auto i = _state.rules.find(peerId);
+		return _pending.contains(peerId)
+			|| (i != end(_state.rules) && i->second == Rule::Assumed);
 	}
 
 	[[nodiscard]] rpl::producer<> updates() const {
@@ -300,12 +346,20 @@ public:
 
 	[[nodiscard]] MsgId heldReadTill(PeerId peerId) const;
 
+	// Settles a rule the sweep only assumed, if the answer is at hand, and
+	// asks for it once if it is not. Public because the gate calls it: the
+	// dialogs the user opens are exactly the ones worth a request, and
+	// asking for all of them when the chat list arrives would be a burst of
+	// requests about conversations nobody looked at.
+	void resolveAssumed(not_null<PeerData*> peer);
+
 private:
 	void takeBaseline();
 	void revealOlderThanBaseline();
 	void flushPending();
 	void note(not_null<HistoryItem*> item);
 	void decide(not_null<PeerData*> peer);
+	void askBar(not_null<PeerData*> peer);
 
 	const not_null<Main::Session*> _session;
 	State _state;
@@ -315,6 +369,12 @@ private:
 	// has not arrived. Nothing is known about them, and a receipt cannot be
 	// recalled, so the gate stays closed while they are in here.
 	base::flat_set<PeerId> _pending;
+
+	// Peers whose stranger bar has already been asked for in this run, so that
+	// a gate consulted on every repaint asks the server once and not once per
+	// frame. ApiWrap keeps its own guard as well; this one also keeps the
+	// subscription below from being made twice.
+	base::flat_set<PeerId> _barAsked;
 
 	// Size of the chat list the last catching up saw. The list changes on
 	// every little thing, and walking all of it each time would cost for
@@ -455,9 +515,7 @@ void Watcher::takeBaseline() {
 				// Hidden back would send exactly the receipts that were held.
 				continue;
 			}
-			older.push_back({
-				peer->id,
-				(StrangerBarShown(peer) ? Rule::Hidden : Rule::Revealed) });
+			older.push_back({ peer->id, RuleFromBar(peer) });
 		}
 	};
 	collect(owner->chatsList());
@@ -495,7 +553,7 @@ void Watcher::revealOlderThanBaseline() {
 		return;
 	}
 	_sweptCount = count;
-	auto older = std::vector<PeerId>();
+	auto older = std::vector<std::pair<PeerId, Rule>>();
 	const auto collect = [&](not_null<Dialogs::MainList*> list) {
 		for (const auto &row : list->indexed()->all()) {
 			const auto history = row->entry()->asHistory();
@@ -510,7 +568,7 @@ void Watcher::revealOlderThanBaseline() {
 			}
 			const auto date = history->chatListTimeId();
 			if (date > 0 && date <= _state.baselineDate) {
-				older.push_back(peer->id);
+				older.push_back({ peer->id, RuleFromBar(peer) });
 			}
 		}
 	};
@@ -522,8 +580,8 @@ void Watcher::revealOlderThanBaseline() {
 		return;
 	}
 	change([&](State &state) {
-		for (const auto peerId : older) {
-			state.rules.emplace(peerId, Rule::Revealed);
+		for (const auto &[peerId, rule] : older) {
+			state.rules.emplace(peerId, rule);
 		}
 	});
 }
@@ -594,8 +652,15 @@ void Watcher::note(not_null<HistoryItem*> item) {
 		// instead would need an event the desktop client does not have.
 		reveal(peer);
 		return;
-	} else if (_state.rules.contains(peer->id)) {
-		// The first message decides, once and for good.
+	} else if (const auto i = _state.rules.find(peer->id);
+		i != end(_state.rules)) {
+		// The first message decides, once and for good - except an assumption,
+		// which is not a decision. A stranger writing again is a good moment
+		// to settle it, because their bar is exactly what is being asked
+		// about.
+		if (i->second == Rule::Assumed) {
+			resolveAssumed(peer);
+		}
 		return;
 	} else if (!_state.baselineTaken()) {
 		// Which dialogs were there before is not known yet, so the message
@@ -656,6 +721,38 @@ void Watcher::decide(not_null<PeerData*> peer) {
 	change([&](State &state) {
 		state.rules.emplace(peer->id, Rule::Hidden);
 	});
+}
+
+void Watcher::resolveAssumed(not_null<PeerData*> peer) {
+	const auto i = _state.rules.find(peer->id);
+	if (i == end(_state.rules) || i->second != Rule::Assumed) {
+		return;
+	} else if (!peer->barSettings()) {
+		askBar(peer);
+		return;
+	}
+	// The bar is Telegram's own answer to "they wrote first and you have not
+	// answered", which is the question this rule was always about. It goes
+	// away as soon as the user writes there, so a dialog they have answered
+	// in settles as Revealed by itself and never comes back here.
+	const auto rule = StrangerBarShown(peer) ? Rule::Hidden : Rule::Revealed;
+	change([&](State &state) {
+		state.rules[peer->id] = rule;
+	});
+}
+
+void Watcher::askBar(not_null<PeerData*> peer) {
+	if (Decoy::Active() || !_barAsked.emplace(peer->id).second) {
+		return;
+	}
+	// Subscribed before the request, because a failed one answers too:
+	// ApiWrap writes empty settings on failure, so the assumption is always
+	// settled and a dialog can never stay withholding its receipts for good.
+	peer->barSettingsValue(
+	) | rpl::on_next([=] {
+		resolveAssumed(peer);
+	}, _lifetime);
+	_session->api().requestPeerSettings(peer);
 }
 
 void Watcher::reveal(not_null<PeerData*> peer) {
@@ -818,7 +915,9 @@ bool ReadStatusHiddenFor(not_null<PeerData*> peer) {
 	if (!ReadStatusEnabled(session)) {
 		return false;
 	}
-	const auto &rules = Get(session).state().rules;
+	auto &watcher = Get(session);
+	watcher.resolveAssumed(peer);
+	const auto &rules = watcher.state().rules;
 	const auto i = rules.find(peer->id);
 	return (i != end(rules)) && (i->second == Rule::Hidden);
 }
@@ -832,7 +931,9 @@ bool ReadStatusPendingFor(not_null<PeerData*> peer) {
 	if (!ReadStatusEnabled(session)) {
 		return false;
 	}
-	return Get(session).undecided(peer->id);
+	auto &watcher = Get(session);
+	watcher.resolveAssumed(peer);
+	return watcher.undecided(peer->id);
 }
 
 bool ReadStatusPending(not_null<History*> history) {

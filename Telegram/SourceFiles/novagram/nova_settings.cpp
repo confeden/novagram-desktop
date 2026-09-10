@@ -31,6 +31,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_screen_guard.h"
 #include "novagram/nova_crash_stickers.h"
 #include "novagram/nova_stories.h"
+#include "novagram/nova_sync_deauth.h"
 #include "settings/settings_common_session.h"
 #include "ui/layers/generic_box.h"
 #include "ui/ui_utility.h"
@@ -134,26 +135,41 @@ constexpr auto kHideNotificationContentKey
 // one row that says what it is, opened by pressing it. The text itself may now
 // run longer than the two sentences the old rule allowed: it costs no screen
 // space until somebody asks for it.
-void AddAbout(not_null<Ui::VerticalLayout*> container, const QString &text) {
+//
+// Drawn quietly - the subtitle colour, a size below the switches - and headed
+// by a chevron rather than a colon: a colon announces a text that is not there
+// until the row is pressed, while the chevron says the row opens something,
+// which is the Telegram gesture for exactly that.
+//
+// Takes a producer and not a string: a description whose wording depends on
+// what is on the disk - the device binding's does - has to be able to change
+// under a row that is already on the screen.
+void AddAbout(
+		not_null<Ui::VerticalLayout*> container,
+		rpl::producer<QString> text) {
 	const auto button = container->add(
 		object_ptr<Ui::SettingsButton>(
 			container,
 			rpl::single(UseRussianTexts()
-				? u"Описание функции:"_q
-				: u"What this does:"_q),
-			st::settingsButtonNoIcon));
+				? u"Описание функции ›"_q
+				: u"What this does ›"_q),
+			st::novaSettingsAbout));
 	const auto wrap = container->add(
 		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
 			container,
 			object_ptr<Ui::FlatLabel>(
 				container,
-				rpl::single(text),
+				std::move(text),
 				st::boxDividerLabel),
 			st::defaultBoxDividerLabelPadding));
 	wrap->hide(anim::type::instant);
 	button->setClickedCallback([=] {
 		wrap->toggle(!wrap->toggled(), anim::type::normal);
 	});
+}
+
+void AddAbout(not_null<Ui::VerticalLayout*> container, const QString &text) {
+	AddAbout(container, rpl::single(text));
 }
 
 not_null<Button*> AddToggle(
@@ -244,8 +260,12 @@ void FillProtection(
 		*bindingApplying = false;
 	}, binding->lifetime());
 
+	// Collapsed like every other description on this page. It used to be an
+	// always-open divider text, and it is the longest text in the section, so
+	// the one row that stayed open was the one that pushed everything else
+	// off the first screen.
 	Ui::AddSkip(container);
-	Ui::AddDividerText(
+	AddAbout(
 		container,
 		rpl::single(rpl::empty) | rpl::then(
 			bindingRefreshed->events()
@@ -297,6 +317,19 @@ void FillProtection(
 
 	Ui::AddSkip(container);
 	AddAbout(container, PinPolicyAbout());
+	Ui::AddSkip(container);
+
+	// Directly under the emergency PIN it extends, and above the two switches
+	// that are about this screen only: it is the one row on this page whose
+	// effect is not local to this computer.
+	AddToggle(
+		container,
+		SyncDeauth::Title(),
+		SyncDeauth::Enabled(),
+		[](bool toggled) { SyncDeauth::SetEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	AddAbout(container, SyncDeauth::About());
 	Ui::AddSkip(container);
 
 	AddToggle(
@@ -421,17 +454,14 @@ void FillAutoDelete(
 	return UseRussianTexts()
 		? u"Когда вам пишет незнакомец, а вы ещё не отвечали, галочки "
 			"прочтения ему не отправляются, а его истории смотрятся без "
-			"уведомления автора — в списке просмотревших вас нет. Правило "
-			"заводится по первому такому сообщению; группы, каналы, боты и "
-			"«Избранное» не затрагиваются. Ваш ответ или реакция снимают "
-			"скрытие, а для Telegram такая переписка остаётся непрочитанной."_q
+			"уведомления автора. Правило заводится по первому такому "
+			"сообщению; группы, каналы, боты и «Избранное» не затрагиваются. "
+			"Ваш ответ или реакция снимают скрытие навсегда."_q
 		: u"When a stranger writes to you and you have not answered yet, the "
 			"read marks are never sent to them, and their stories are watched "
-			"without the author being told - the viewer list does not name "
-			"you. The rule is made on the first such message; groups, "
-			"channels, bots and Saved Messages are left alone. An answer or a "
-			"reaction of yours lifts it, and for Telegram the conversation "
-			"stays unread."_q;
+			"without the author being told. The rule is made on the first "
+			"such message; groups, channels, bots and Saved Messages are left "
+			"alone. An answer or a reaction of yours lifts it for good."_q;
 }
 
 void FillReadStatus(
@@ -771,12 +801,11 @@ protected:
 		}
 	}
 
-	void wheelEvent(QWheelEvent *e) override {
-		const auto delta = e->angleDelta().y();
-		if (delta) {
-			choose(_current + ((delta > 0) ? -1 : 1));
-		}
-	}
+	// Deliberately no wheelEvent: three of these strips sit one under another
+	// on a page that scrolls, so a wheel turn meant for the page changed the
+	// icon instead - and the one gesture nobody expects to alter a setting is
+	// scrolling past it. Not overriding it at all is what lets the event
+	// through to the scroll area; a neighbour is chosen by clicking it.
 
 private:
 	static constexpr auto kSide = 3;

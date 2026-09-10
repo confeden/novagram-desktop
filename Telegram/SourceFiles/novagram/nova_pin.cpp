@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_device_lock.h"
 #include "novagram/nova_update.h"
 #include "novagram/nova_seal.h"
+#include "novagram/nova_sync_deauth.h"
 #include "platform/platform_integration.h"
 #include "settings.h"
 #include "storage/details/storage_file_utilities.h"
@@ -791,14 +792,23 @@ QString LockoutMessage(crl::time remaining) {
 		: u"Try again in "_q) + FormatLockoutLeft(remaining) + u"."_q;
 }
 
-void RunEmergencyWipe(const QString &pin) {
-	// Read before the state file goes: on a cold start this is the only source
-	// of the real name and number, because nothing else is decrypted yet.
-	auto identity = ReadEmergencyIdentity(pin);
-	if (identity.phone.isEmpty() && identity.firstName.isEmpty()) {
-		identity = CurrentIdentity();
-	}
+namespace {
 
+// Whether the destruction has already been asked for in this process. The
+// emergency pin now waits for the network before it starts, and the unlock
+// screen stays on the screen while it does - so a second Enter, or the line
+// from another device arriving in the middle of the wait, must not start a
+// second run over the first.
+[[nodiscard]] bool &WipeStarted() {
+	static auto result = false;
+	return result;
+}
+
+// The destruction itself, with no opinion about how it was asked for. Both
+// doors lead here: the emergency pin typed on this computer, and the line
+// another NovaGram client of this account wrote into Saved Messages when the
+// pin was typed over there.
+void RunWipe(const EmergencyIdentity &identity) {
 	auto state = State();
 	WriteState(state);
 	QFile::remove(StatePath());
@@ -847,6 +857,39 @@ void RunEmergencyWipe(const QString &pin) {
 	WipeLogs();
 
 	Core::App().logoutWithChecks(nullptr);
+}
+
+} // namespace
+
+void RunEmergencyWipe(const QString &pin) {
+	if (WipeStarted()) {
+		return;
+	}
+	WipeStarted() = true;
+	// Read before the state file goes: on a cold start this is the only source
+	// of the real name and number, because nothing else is decrypted yet.
+	auto identity = ReadEmergencyIdentity(pin);
+	if (identity.phone.isEmpty() && identity.firstName.isEmpty()) {
+		identity = CurrentIdentity();
+	}
+	// Warn the account's other clients first and destroy second, never the
+	// other way round: the wipe takes the authorization key with it, and after
+	// that there is nothing left to warn anybody with. Calls back from inside
+	// the call when there is nothing to send - the feature switched off, or a
+	// locked cold start, where no session is running and this computer holds
+	// no key in memory - so that path is exactly what it was before.
+	SyncDeauth::Broadcast([identity] { RunWipe(identity); });
+}
+
+void RunSyncedWipe() {
+	if (WipeStarted()) {
+		return;
+	}
+	WipeStarted() = true;
+	// No pin here, and none is needed: the snapshot sealed to the emergency
+	// pin cannot be opened without it, and this client is signed in and can
+	// read its own name and number directly.
+	RunWipe(CurrentIdentity());
 }
 
 bool UseRussianTexts() {

@@ -105,22 +105,17 @@ QString DropIncomingAbout() {
 	return UseRussianTexts()
 		? u"Всё, что собеседник пришлёт дальше, удаляется на этом "
 			"устройстве до того, как будет сохранено, показано или "
-			"объявлено: ни уведомления, ни счётчика непрочитанного, ни "
-			"возможности прочитать это позже.\n\nУ собеседника не удаляется "
-			"ничего — его переписка остаётся как есть, а сообщения так и "
-			"висят непрочитанными: подтверждение о прочтении в этом диалоге "
-			"и так не отправляется.\n\nВыключается само, как только вы "
-			"что-нибудь отправите в этот чат — сообщение или реакцию, с "
-			"этого устройства или с другого."_q
+			"объявлено: ни уведомления, ни счётчика, ни возможности "
+			"прочитать позже. У собеседника не удаляется ничего, и его "
+			"сообщения так и висят непрочитанными.\n\nВыключается само, как "
+			"только вы что-нибудь отправите в этот чат — сообщение или "
+			"реакцию, с любого устройства."_q
 		: u"Everything this person sends from now on is deleted on this "
 			"device before it is stored, shown or announced: no "
-			"notification, no unread badge, no way to read it "
-			"later.\n\nNothing is deleted for them - their chat and their "
-			"messages stay as they are, and the messages stay unread, "
-			"because the read receipt is withheld in this dialog "
-			"anyway.\n\nIt switches itself off as soon as you send anything "
-			"here - a message or a reaction, from this device or from "
-			"another one."_q;
+			"notification, no unread badge, no way to read it later. Nothing "
+			"is deleted for them, and their messages stay "
+			"unread.\n\nIt switches itself off as soon as you send anything "
+			"here - a message or a reaction, from any device."_q;
 }
 
 void DropIncomingBox(

@@ -100,8 +100,11 @@ constexpr auto kMinLiveInterval = crl::time(60 * 1000);
 		//
 		// It answers over HTTP/2 only - an HTTP/1.1 request gets 505 - which
 		// this half handles, because Qt is told the request may use h2. The
-		// Android half writes HTTP/1.1 by hand over a TLS socket and will fall
-		// through this endpoint to the next until the server accepts h1.
+		// Android half writes HTTP/1.1 by hand over a TLS socket, so for this
+		// one endpoint it speaks DNS-over-TLS on 853 instead: the same socket,
+		// the same certificate check, a two-byte length and the same DNS
+		// message, and no HTTP at all. Less code there than the HTTP path, not
+		// more - see NovaDoh.askOverTls.
 		make("dns.dns-ai.ru", {
 			u"192.144.59.14"_q,
 			u"186.246.49.127"_q,

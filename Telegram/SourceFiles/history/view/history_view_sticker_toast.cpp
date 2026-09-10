@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_sticker_toast.h"
 
+#include "novagram/nova_crash_stickers.h"
 #include "ui/toast/toast.h"
 #include "ui/toast/toast_widget.h"
 #include "ui/widgets/buttons.h"
@@ -328,6 +329,13 @@ void StickerToast::setupLottiePreview(not_null<Ui::RpWidget*> widget, int size) 
 
 	const auto bytes = _for->createMediaView()->bytes();
 	const auto filepath = _for->filepath();
+	if (NovaGram::CrashStickers::Blocked(_for, bytes)) {
+		// This toast is raised by a sticker somebody else sent, from a set
+		// this client does not have - which is the delivery route the guard
+		// exists for. Nothing is drawn instead: the toast is a courtesy, and
+		// an empty one is better than a decoded bomb.
+		return;
+	}
 	const auto ratio = style::DevicePixelRatio();
 	const auto player = widget->lifetime().make_state<Lottie::SinglePlayer>(
 		Lottie::ReadContent(bytes, filepath),

@@ -7,8 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-// The only certificate authorities the four built-in DNS endpoints are allowed
-// to chain to.
+// The only certificate authorities the built-in DNS endpoints are allowed to
+// chain to.
 //
 // Why this list exists. Everything else in the fork can be checked by the
 // person using it; the resolver cannot, because it is what the client asks
@@ -19,20 +19,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 // Handing QSslConfiguration an explicit list turns the on-demand loading off,
 // and a Windows-supplied root outside this list is then refused.
 //
-// Why these ten. Four of them were taken from the live chains of the four
-// endpoints on 2026-08-20; the other six are the neighbouring roots of the very
-// same authorities, so that a provider rotating within its own CA does not go
-// dark. A provider that moves to an authority outside this list stops working
-// and the next endpoint is tried - which is the reason there are four of them,
-// written down in doh.md long before this file existed.
+// Why these ten. Five of them are the live chains of the five endpoints -
+// four taken on 2026-08-20, ISRG Root X1 for the fifth, which is on Let's
+// Encrypt - and the other five are the neighbouring roots of those same
+// authorities, so that a provider rotating within its own CA does not go dark.
+// A provider that moves to an authority outside this list stops working and the
+// next endpoint is tried, which is the reason there is more than one.
 //
 // What this deliberately does NOT cover: an endpoint the owner added
 // themselves. That server is their choice, it may well use a private CA, and
 // pinning ours to it would only make the feature unusable. See nova_doh.cpp.
 //
 // To refresh: connect to each endpoint, build the chain, export the roots. Which
-// root belongs to which endpoint, and why there are ten rather than four, is
-// recorded in docs/NOVAGRAM.md, section 4.5.
+// root belongs to which endpoint, and why there are ten rather than five, is
+// recorded in docs/NOVAGRAM.md.
 
 namespace NovaGram::Doh {
 

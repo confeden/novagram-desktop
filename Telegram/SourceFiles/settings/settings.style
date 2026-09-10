@@ -41,6 +41,18 @@ settingsButtonNoIconLocked: SettingsButton(settingsButtonNoIcon) {
 }
 settingsButtonActive: SettingsButton(infoMainButton, settingsButton) {
 }
+// NovaGram: the row that opens a feature's description. There is one under
+// almost every switch in the fork's section, so it is drawn in the subtitle
+// colour and a size below the switches - a door has to be findable, not as
+// loud as the thing it stands next to.
+novaSettingsAbout: SettingsButton(settingsButtonNoIcon) {
+	textFg: windowSubTextFg;
+	textFgOver: windowSubTextFg;
+	style: TextStyle(boxTextStyle) {
+		font: font(13px);
+	}
+	padding: margins(22px, 7px, 22px, 5px);
+}
 settingsAttentionButton: SettingsButton(settingsButtonNoIcon) {
 	textFg: attentionButtonFg;
 	textFgOver: attentionButtonFgOver;

@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/stickers_emoji_pack.h"
 
+#include "novagram/nova_crash_stickers.h"
 #include "chat_helpers/stickers_emoji_image_loader.h"
 #include "history/view/history_view_element.h"
 #include "history/history_item.h"
@@ -273,6 +274,20 @@ std::unique_ptr<Lottie::SinglePlayer> EmojiPack::effectPlayer(
 		QByteArray data,
 		QString filepath,
 		EffectType type) {
+	if (NovaGram::CrashStickers::Blocked(document, data)) {
+		// The effect is a second animation that arrives with the sticker and
+		// is played without anyone asking for it, so it is the same delivery
+		// route and gets the same answer. The sticker itself is refused by the
+		// gates in stickers_lottie.cpp; this is the file beside it.
+		//
+		// Emptied rather than refused with a null: four callers take what this
+		// returns and go straight on to ask it for updates, so a null here
+		// would trade a crash on a malformed file for a crash on every file.
+		// A player built from nothing never becomes ready and draws nothing,
+		// which is exactly what a blocked effect should look like.
+		data = QByteArray();
+		filepath = QString();
+	}
 	// Shortened copy from stickers_lottie module.
 	const auto baseKey = document->bigFileBaseCacheKey();
 	const auto tag = uint8(type);

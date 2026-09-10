@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
 #include "main/main_session.h"
+#include "novagram/nova_read_status.h"
 #include "data/data_histories.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
@@ -999,6 +1000,19 @@ void RepliesList::readTill(
 }
 
 void RepliesList::sendReadTillRequest() {
+	if (NovaGram::ReadStatusWithheldFor(_history->peer)) {
+		// The one read receipt on the desktop that had no fork check at all.
+		// It cannot leak anything today - a replies list belongs to a forum
+		// topic or to a channel's discussion group, and the read-status rule
+		// is only ever made for a private dialog, so this answers false every
+		// time. It is here because the gate has to be in front of every
+		// sender, not in front of the senders that happened to matter when it
+		// was written: that is I15, and this is exactly the shape a merge
+		// walks around. The Android half is already covered, by a gate that
+		// sits above completeReadTask and holds thread reads (novaHoldSweep).
+		_readRequestTimer.cancel();
+		return;
+	}
 	if (_readRequestTimer.isActive()) {
 		_readRequestTimer.cancel();
 	}

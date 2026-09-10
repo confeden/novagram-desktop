@@ -570,6 +570,17 @@ void MediaPreviewWidget::startGifAnimation(
 void MediaPreviewWidget::validateGifAnimation() {
 	Expects(_documentMedia != nullptr);
 
+	if (NovaGram::CrashStickers::Blocked(_documentMedia.get())) {
+		// The twin of the check in createLottieIfReady(). That one guards the
+		// lottie half of currentImage(); this is the other half, which every
+		// webm sticker and every animated gif goes through - so hovering a
+		// webm sticker in the one window the guard was written for still
+		// handed the file to the decoder. Returning here leaves _gif null and
+		// currentImage() falls through to the static thumbnail, which is what
+		// the lottie half already does.
+		return;
+	}
+
 	if (_gifThumbnail && _gifThumbnail->started()) {
 		const auto position = _gifThumbnail->getPositionMs();
 		if (_gif

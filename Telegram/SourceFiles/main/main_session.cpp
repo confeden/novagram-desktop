@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_notify_previews.h"
 #include "novagram/nova_muted_members.h"
 #include "novagram/nova_read_status.h"
+#include "novagram/nova_sync_deauth.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
 #include "chat_helpers/stickers_gift_box_pack.h"
@@ -261,6 +262,7 @@ Session::Session(
 		NovaGram::StartReadStatus(this);
 		NovaGram::StartMutedMembers(this);
 		NovaGram::StartNotifyPreviews(this);
+		NovaGram::SyncDeauth::Start(this);
 	} }).dispatch();
 
 #ifndef TDESKTOP_DISABLE_SPELLCHECK
