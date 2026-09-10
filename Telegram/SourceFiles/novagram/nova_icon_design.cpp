@@ -42,6 +42,7 @@ constexpr uint32 kAccentColors[kAccents] = {
 constexpr auto kInk = 0x12141AU;
 
 std::optional<Design> GlobalCurrent;
+int GlobalGeneration/* = 0*/;
 rpl::event_stream<Design> GlobalChanges;
 base::flat_map<uint64, QImage> GlobalLogos;
 
@@ -222,19 +223,19 @@ void PaintPlate(
 	p.restore();
 }
 
+// Painted twice: over the plate, and again inside the mark. A pattern that
+// only ever touched the background changed the picture without changing the
+// thing in the middle of it, which is not what picking a texture is for.
 void PaintTexture(
 		QPainter &p,
 		int texture,
-		int style,
-		uint32 accent,
+		QColor ink,
+		QColor ink2,
 		QRectF box,
 		const QPainterPath &plate) {
 	if (!texture) {
 		return;
 	}
-	const auto dark = (style == 1 || style == 8);
-	const auto ink = dark ? Rgb(accent, 51) : QColor(255, 255, 255, 41);
-	const auto ink2 = dark ? Rgb(accent, 31) : QColor(0, 0, 0, 26);
 	const auto side = std::min(box.width(), box.height());
 	const auto u = side / 16.;
 	const auto x0 = box.left();
@@ -396,7 +397,20 @@ void PaintTexture(
 	p.restore();
 }
 
-void PaintPlane(QPainter &p, int style, uint32 accent, QRectF box) {
+struct PlanePaths {
+	QPainterPath wing;
+	QPainterPath fold;
+	QPainterPath whole;
+};
+
+// The colour of the mark for a style, and what sits under it: the texture pass
+// inside the mark paints the plate showing through it, so it needs both.
+struct PlaneColors {
+	uint32 main = 0;
+	uint32 plate = 0;
+};
+
+[[nodiscard]] PlanePaths MakePlanePaths(QRectF box) {
 	const auto side = std::min(box.width(), box.height());
 	const auto inner = side * 0.58;
 	const auto left = box.left() + (box.width() - inner) / 2.;
@@ -404,17 +418,20 @@ void PaintPlane(QPainter &p, int style, uint32 accent, QRectF box) {
 	const auto at = [&](float64 x, float64 y) {
 		return QPointF(left + x * inner, top + y * inner);
 	};
-	auto wing = QPainterPath();
-	wing.moveTo(at(0.02, 0.52));
-	wing.lineTo(at(0.98, 0.04));
-	wing.lineTo(at(0.42, 0.66));
-	wing.closeSubpath();
-	auto fold = QPainterPath();
-	fold.moveTo(at(0.42, 0.66));
-	fold.lineTo(at(0.98, 0.04));
-	fold.lineTo(at(0.58, 0.98));
-	fold.closeSubpath();
+	auto result = PlanePaths();
+	result.wing.moveTo(at(0.02, 0.52));
+	result.wing.lineTo(at(0.98, 0.04));
+	result.wing.lineTo(at(0.42, 0.66));
+	result.wing.closeSubpath();
+	result.fold.moveTo(at(0.42, 0.66));
+	result.fold.lineTo(at(0.98, 0.04));
+	result.fold.lineTo(at(0.58, 0.98));
+	result.fold.closeSubpath();
+	result.whole = result.wing.united(result.fold);
+	return result;
+}
 
+[[nodiscard]] PlaneColors MakePlaneColors(int style, uint32 accent) {
 	auto plate = accent;
 	auto main = PlaneColor(accent);
 	if (style == 1 || style == 8) {              // Neon, Terminal
@@ -427,20 +444,28 @@ void PaintPlane(QPainter &p, int style, uint32 accent, QRectF box) {
 		main = 0x2A2622;
 		plate = Shade(accent, 0.62);
 	}
+	return { main, plate };
+}
+
+void PaintPlane(
+		QPainter &p,
+		int style,
+		PlaneColors colors,
+		const PlanePaths &paths) {
 	p.save();
 	p.setPen(Qt::NoPen);
 	if (style == 4) {
-		// Mono cuts the mark out of the plate instead of drawing it on top.
+		// Cutout takes the mark out of the plate instead of drawing it on top.
 		p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
 		p.setBrush(QColor(0, 0, 0, 255));
-		p.drawPath(wing);
+		p.drawPath(paths.wing);
 		p.setBrush(QColor(0, 0, 0, 140));
-		p.drawPath(fold);
+		p.drawPath(paths.fold);
 	} else {
-		p.setBrush(Rgb(main));
-		p.drawPath(wing);
-		p.setBrush(Rgb(Mix(main, plate, 0.42)));
-		p.drawPath(fold);
+		p.setBrush(Rgb(colors.main));
+		p.drawPath(paths.wing);
+		p.setBrush(Rgb(Mix(colors.main, colors.plate, 0.42)));
+		p.drawPath(paths.fold);
 	}
 	p.restore();
 }
@@ -474,6 +499,7 @@ void SetCurrent(Design design) {
 	}
 	GlobalCurrent = design;
 	GlobalLogos.clear();
+	++GlobalGeneration;
 	auto blob = QByteArray(4, char(0));
 	blob[0] = kDesignVersion;
 	blob[1] = char(design.style);
@@ -486,6 +512,10 @@ void SetCurrent(Design design) {
 
 rpl::producer<Design> Changes() {
 	return GlobalChanges.events();
+}
+
+int Generation() {
+	return GlobalGeneration;
 }
 
 bool IsOriginal(Design design) {
@@ -517,9 +547,33 @@ QImage Render(Design design, int size, bool margin) {
 	auto p = QPainter(&result);
 	p.setRenderHint(QPainter::Antialiasing, true);
 	const auto plate = PlatePath(design.style, box);
+	const auto dark = (design.style == 1 || design.style == 8);
 	PaintPlate(p, design.style, accent, second, box, plate);
-	PaintTexture(p, design.texture, design.style, accent, box, plate);
-	PaintPlane(p, design.style, accent, box);
+	// Over the plate, and strong enough to be seen at a glance: at the alpha
+	// this started with, the whole row of textures looked alike.
+	PaintTexture(
+		p,
+		design.texture,
+		dark ? Rgb(accent, 105) : QColor(255, 255, 255, 92),
+		dark ? Rgb(accent, 64) : QColor(0, 0, 0, 64),
+		box,
+		plate);
+	const auto paths = MakePlanePaths(box);
+	const auto colors = MakePlaneColors(design.style, accent);
+	PaintPlane(p, design.style, colors, paths);
+	if (design.style != 4) {
+		// And inside the mark: the plate colour painted through the plane, so
+		// the texture reads as the mark being made of it rather than as
+		// wallpaper behind it. Cutout is skipped - its mark is a hole, and
+		// painting into a hole fills it.
+		PaintTexture(
+			p,
+			design.texture,
+			Rgb(colors.plate, 190),
+			Rgb(colors.plate, 130),
+			box,
+			paths.whole);
+	}
 	p.end();
 	return result;
 }

@@ -45,6 +45,18 @@ constexpr auto kStartupDelay = crl::time(15 * 1000);
 constexpr auto kRetryDelay = TimeId(5 * 60);
 constexpr auto kPerTick = 5;
 
+// One request removes up to a hundred messages, and Erase evidence hands over
+// hundreds at a time. Sent one by one, at five per tick and five seconds
+// between ticks, "erase everything" over a long correspondence would have run
+// for hours - most of it waiting, not deleting. Batched it is one request per
+// hundred, which is what the API was built for.
+constexpr auto kDeleteBatch = 100;
+
+// Two chats per tick at most. The batch is one request, but the answer has to
+// be applied to the loaded history, and a tick that walks a dozen chats at
+// once is felt on the screen.
+constexpr auto kBatchPeers = 2;
+
 // The gap between replacing the text and deleting the message. The promise
 // spells it out as "изменить на точку, а через минуту стереть": the edited
 // version has to reach the other side before the message disappears,
@@ -299,6 +311,8 @@ private:
 	void replace(not_null<HistoryItem*> item, const Entry &entry);
 	void replaceFailed(const Entry &entry, const QString &error);
 	void erase(const Entry &entry);
+	[[nodiscard]] bool readyToDelete(const Entry &entry) const;
+	void eraseBatch(PeerId peerId, std::vector<Entry> entries);
 	void erased(const Entry &entry);
 	void eraseFailed(const Entry &entry, const QString &error);
 	void floodWait(Stage stage, TimeId seconds);
@@ -452,6 +466,16 @@ void Runner::enqueueNow(const std::vector<FullMsgId> &ids) {
 	schedule();
 }
 
+// Fired whenever a counter moves, so the Erase evidence window can be built
+// out of the numbers instead of a callback chain through the queue.
+[[nodiscard]] rpl::event_stream<> &ProgressStream(
+		not_null<Main::Session*> session) {
+	static auto Streams = base::flat_map<
+		Main::Session*,
+		rpl::event_stream<>>();
+	return Streams[session.get()];
+}
+
 void Runner::count(const Entry &entry, Outcome outcome) {
 	if (!entry.erase) {
 		return;
@@ -465,6 +489,7 @@ void Runner::count(const Entry &entry, Outcome outcome) {
 	case Outcome::Deleted: ++i->deleted; break;
 	case Outcome::Skipped: ++i->skipped; break;
 	}
+	ProgressStream(_session).fire({});
 }
 
 void Runner::checkReportFinished(PeerId peerId) {
@@ -550,6 +575,7 @@ void Runner::tick() {
 	const auto now = base::unixtime::now();
 	auto handled = 0;
 	auto due = std::vector<Entry>();
+	auto batches = base::flat_map<PeerId, std::vector<Entry>>();
 	for (const auto &entry : _state.queue) {
 		if (entry.dueAt > now) {
 			continue;
@@ -559,11 +585,23 @@ void Runner::tick() {
 			continue;
 		} else if (_busy.contains(FullMsgId(entry.peerId, entry.msgId))) {
 			continue;
+		} else if (readyToDelete(entry)) {
+			const auto i = batches.find(entry.peerId);
+			if (i != end(batches)) {
+				if (i->second.size() < kDeleteBatch) {
+					i->second.push_back(entry);
+				}
+			} else if (batches.size() < kBatchPeers) {
+				batches.emplace(entry.peerId, std::vector<Entry>{ entry });
+			}
+			continue;
+		} else if (handled < kPerTick) {
+			due.push_back(entry);
+			++handled;
 		}
-		due.push_back(entry);
-		if (++handled == kPerTick) {
-			break;
-		}
+	}
+	for (auto &[peerId, entries] : batches) {
+		eraseBatch(peerId, std::move(entries));
 	}
 	for (const auto &entry : due) {
 		process(entry);
@@ -740,6 +778,96 @@ void Runner::erase(const Entry &entry) {
 				if (const auto strong = weak.get()) {
 					strong->_busy.remove(id);
 					strong->eraseFailed(entry, error.type());
+				}
+			};
+			if (channel) {
+				return api->request(MTPchannels_DeleteMessages(
+					channel->inputChannel(),
+					MTP_vector<MTPint>(ids)
+				)).done(done).fail(fail).handleFloodErrors().send();
+			}
+			return api->request(MTPmessages_DeleteMessages(
+				MTP_flags(MTPmessages_DeleteMessages::Flag::f_revoke),
+				MTP_vector<MTPint>(ids)
+			)).done(done).fail(fail).handleFloodErrors().send();
+		});
+}
+
+// Whether this entry's next step is the deletion itself, which is the part
+// that can travel with a hundred others in one request. Everything the
+// replacement step still has to look at - and everything the rules may yet
+// spare - is left to process() one at a time.
+bool Runner::readyToDelete(const Entry &entry) const {
+	if (!IsServerMsgId(entry.msgId)) {
+		return false;
+	} else if (entry.stage == Stage::Delete) {
+		return true;
+	} else if (!entry.erase) {
+		// A plain auto-delete entry has its rules read again in process(),
+		// and being made an administrator has to spare what is waiting.
+		return false;
+	}
+	const auto item = _session->data().message(
+		FullMsgId(entry.peerId, entry.msgId));
+	if (!item) {
+		// Nothing loaded to edit, and deleting by identifier needs nothing.
+		return true;
+	} else if (!item->out() || !item->isRegular()) {
+		return false;
+	}
+	// The replacement is only possible while the server still allows an edit -
+	// 48 hours for most messages - so anything older goes straight out with the
+	// batch instead of spending a request on an edit that would be refused.
+	return item->media()
+		|| item->emptyText()
+		|| !item->allowsEdit(base::unixtime::now());
+}
+
+void Runner::eraseBatch(PeerId peerId, std::vector<Entry> entries) {
+	const auto peer = _session->data().peerLoaded(peerId);
+	if (!peer || entries.empty()) {
+		for (const auto &entry : entries) {
+			advance(entry, entry.stage, base::unixtime::now() + kRetryDelay);
+		}
+		return;
+	}
+	const auto history = _session->data().history(peerId);
+	const auto channel = peer->asChannel();
+	const auto api = &_session->api();
+	const auto weak = base::make_weak(this);
+	auto ids = QVector<MTPint>();
+	ids.reserve(entries.size());
+	for (const auto &entry : entries) {
+		ids.push_back(MTP_int(entry.msgId));
+		_busy.emplace(FullMsgId(entry.peerId, entry.msgId));
+	}
+	_session->data().histories().sendRequest(
+		history,
+		Data::Histories::RequestType::Delete,
+		[=](Fn<void()> finish) {
+			const auto done = [=](
+					const MTPmessages_AffectedMessages &result) {
+				api->applyAffectedMessages(history->peer, result);
+				finish();
+				if (const auto strong = weak.get()) {
+					for (const auto &entry : entries) {
+						strong->_busy.remove(
+							FullMsgId(entry.peerId, entry.msgId));
+						strong->erased(entry);
+					}
+				}
+			};
+			const auto fail = [=](const MTP::Error &error) {
+				finish();
+				if (const auto strong = weak.get()) {
+					// Whatever the failure was, it is the same for all hundred:
+					// a flood wait, a chat that refuses, a broken answer. Each
+					// entry takes it as if it had been sent on its own.
+					for (const auto &entry : entries) {
+						strong->_busy.remove(
+							FullMsgId(entry.peerId, entry.msgId));
+						strong->eraseFailed(entry, error.type());
+					}
 				}
 			};
 			if (channel) {
@@ -965,6 +1093,37 @@ void EnqueueNow(
 	if (!ids.empty()) {
 		Get(session).enqueueNow(ids);
 	}
+}
+
+EraseProgress EraseProgressFor(not_null<PeerData*> peer) {
+	auto result = EraseProgress();
+	const auto runner = Find(&peer->session());
+	if (!runner) {
+		return result;
+	}
+	const auto &state = runner->state();
+	const auto i = ranges::find(state.reports, peer->id, &Report::peerId);
+	if (i != end(state.reports)) {
+		result.queued = i->queued;
+		result.replaced = i->replaced;
+		result.deleted = i->deleted;
+		result.skipped = i->skipped;
+		result.finished = i->finished;
+	}
+	result.left = int(ranges::count_if(state.queue, [&](const Entry &entry) {
+		return entry.erase && (entry.peerId == peer->id);
+	}));
+	// A report that says it is finished while entries are still queued is a
+	// state that should not exist; answered as unfinished rather than trusted,
+	// because the window closes on this flag.
+	if (result.left > 0) {
+		result.finished = false;
+	}
+	return result;
+}
+
+rpl::producer<> EraseProgressChanges(not_null<Main::Session*> session) {
+	return ProgressStream(session).events();
 }
 
 void Start(not_null<Main::Session*> session) {

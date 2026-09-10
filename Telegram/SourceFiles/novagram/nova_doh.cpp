@@ -92,6 +92,21 @@ constexpr auto kMinLiveInterval = crl::time(60 * 1000);
 			u"149.112.112.112"_q,
 			u"2620:fe::fe"_q,
 			u"2620:fe::9"_q }),
+		// The fifth is not one of the big four, and that is the point: the
+		// other four are the resolvers everyone uses, so a network that wants
+		// to know who is asking already knows where to look. Its certificate
+		// is Let's Encrypt, whose roots are pinned here already (M10), and all
+		// four addresses were checked by a live TLS handshake.
+		//
+		// It answers over HTTP/2 only - an HTTP/1.1 request gets 505 - which
+		// this half handles, because Qt is told the request may use h2. The
+		// Android half writes HTTP/1.1 by hand over a TLS socket and will fall
+		// through this endpoint to the next until the server accepts h1.
+		make("dns.dns-ai.ru", {
+			u"192.144.59.14"_q,
+			u"186.246.49.127"_q,
+			u"2a0a:2b41:0:500d::53"_q,
+			u"2a0d:8480:0:67c::14"_q }),
 	};
 }
 

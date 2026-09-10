@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_erase.h"
 
 #include "apiwrap.h"
+#include "base/timer.h"
 #include "base/unixtime.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
@@ -32,6 +33,10 @@ namespace NovaGram {
 namespace {
 
 constexpr auto kPageSize = 100;
+
+// How long the finished window stays before it closes itself. Long enough to
+// read three numbers, short enough not to be in the way.
+constexpr auto kLingerAfterFinished = crl::time(10 * 1000);
 
 // Telegram answers a history page request with the newest messages first, so
 // walking backwards by offset identifier reaches the oldest message of the
@@ -200,6 +205,87 @@ void Collector::finish() {
 
 } // namespace
 
+// The window that stays up while the queue works.
+//
+// Erase evidence used to answer with one toast - "queued: 47" - and then went
+// quiet for as long as the queue took, which for a long correspondence was
+// minutes. Nothing on the screen said whether it was working, finished or
+// stuck, and the toast that eventually reported the outcome could easily be
+// missed. So the work is now watched: the numbers move while it runs, the
+// window cannot be dismissed until it is through, and afterwards it waits ten
+// seconds - or until it is closed - so the result is actually read.
+void ProgressBox(
+		not_null<Ui::GenericBox*> box,
+		not_null<PeerData*> peer,
+		int found) {
+	const auto russian = UseRussianTexts();
+	box->setTitle(rpl::single(EraseMenuText()));
+	box->setWidth(st::boxWideWidth);
+	box->setCloseByEscape(false);
+	box->setCloseByOutsideClick(false);
+
+	struct State {
+		base::Timer close;
+		bool finished = false;
+	};
+	const auto state = box->lifetime().make_state<State>();
+	state->close.setCallback([=] { box->closeBox(); });
+
+	const auto label = box->addRow(object_ptr<Ui::FlatLabel>(
+		box,
+		rpl::single(QString()),
+		st::boxLabel));
+
+	const auto update = [=] {
+		const auto progress = EraseProgressFor(peer);
+		const auto queued = progress.queued ? progress.queued : found;
+		const auto done = progress.deleted + progress.skipped;
+		auto text = QStringList();
+		text.push_back(russian
+			? u"Найдено ваших сообщений: %1"_q.arg(queued)
+			: u"Messages of yours found: %1"_q.arg(queued));
+		text.push_back(russian
+			? u"Уничтожено: %1 · заменено на точку: %2 · пропущено: %3"_q
+				.arg(progress.deleted)
+				.arg(progress.replaced)
+				.arg(progress.skipped)
+			: u"Destroyed: %1 · replaced with a dot: %2 · skipped: %3"_q
+				.arg(progress.deleted)
+				.arg(progress.replaced)
+				.arg(progress.skipped));
+		if (!progress.finished) {
+			text.push_back(russian
+				? u"Осталось в очереди: %1. Окно закроется само, когда очередь "
+					"дойдёт до конца — не закрывайте его, чтобы видеть ход."_q
+					.arg(progress.left)
+				: u"Left in the queue: %1. This window closes itself once the "
+					"queue is through - leave it up to watch."_q
+					.arg(progress.left));
+		} else {
+			text.push_back(russian
+				? u"Готово. Окно закроется через несколько секунд."_q
+				: u"Done. This window closes in a few seconds."_q);
+		}
+		label->setText(text.join(u"\n\n"_q));
+		if (progress.finished && !state->finished) {
+			state->finished = true;
+			// Only now may it be dismissed, and only now does it carry a
+			// button: while the queue runs there is nothing to press that
+			// would stop it, and a button that does nothing is a lie.
+			box->setCloseByEscape(true);
+			box->setCloseByOutsideClick(true);
+			box->addButton(
+				rpl::single(russian ? u"Закрыть"_q : u"Close"_q),
+				[=] { box->closeBox(); });
+			state->close.callOnce(kLingerAfterFinished);
+		}
+	};
+	update();
+	EraseProgressChanges(
+		&peer->session()
+	) | rpl::on_next(update, box->lifetime());
+}
+
 QString EraseMenuText() {
 	return UseRussianTexts() ? u"Erase evidence"_q : u"Erase evidence"_q;
 }
@@ -232,17 +318,17 @@ void EraseEvidenceBox(
 					history,
 					since);
 				collector->start([=](int found) {
-					// Only the start of the work: the queue reports what it
-					// actually did once it is through, in its own toast.
-					show->showToast(found
-						? (russian
-							? u"В очередь на уничтожение: %1. Итог придёт, "
-								"когда очередь дойдёт до конца."_q
-							: u"Queued for destruction: %1. The result follows "
-								"once the queue is through."_q).arg(found)
-						: (russian
+					if (!found) {
+						show->showToast(russian
 							? u"Ваших сообщений за этот период не найдено"_q
-							: u"No messages of yours in this period"_q));
+							: u"No messages of yours in this period"_q);
+						return;
+					}
+					// The queue starts working the moment it is handed the list,
+					// and this window is what makes that visible while it does.
+					show->showBox(Box([=](not_null<Ui::GenericBox*> progress) {
+						ProgressBox(progress, peer, found);
+					}));
 				});
 			},
 			.confirmText = (russian ? u"Уничтожить"_q : u"Destroy"_q),

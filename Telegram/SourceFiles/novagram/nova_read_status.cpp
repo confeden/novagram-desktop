@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_contact_status.h"
 #include "main/main_session.h"
 #include "novagram/nova_decoy.h"
+#include "novagram/nova_drop_incoming.h"
 #include "novagram/nova_pin.h"
 #include "storage/storage_account.h"
 #include "ui/layers/generic_box.h"
@@ -994,6 +995,36 @@ void ReadStatusBox(
 		st::boxLabel));
 
 	if (hidden) {
+		// The switch that belongs with this one, offered where the rule it
+		// depends on is explained. It also has an entry in the chat menu, and
+		// that is deliberate: this box is opened from the note above the
+		// messages, which is where most people meet the hiding at all.
+		Ui::AddSkip(box->verticalLayout());
+		struct DropState {
+			rpl::variable<QString> title;
+		};
+		const auto drop = box->lifetime().make_state<DropState>();
+		drop->title = DropIncomingActive(peer)
+			? DropIncomingStopTitle()
+			: DropIncomingTitle();
+		const auto button = box->addRow(
+			object_ptr<Ui::SettingsButton>(
+				box,
+				drop->title.value(),
+				st::settingsButtonNoIcon),
+			style::margins());
+		button->setClickedCallback([=] {
+			const auto now = !DropIncomingActive(peer);
+			SetDropIncoming(peer, now);
+			drop->title = now
+				? DropIncomingStopTitle()
+				: DropIncomingTitle();
+		});
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box,
+			rpl::single(DropIncomingAbout()),
+			st::boxDividerLabel));
+
 		Ui::AddSkip(box->verticalLayout());
 		box->addRow(object_ptr<Ui::FlatLabel>(
 			box,

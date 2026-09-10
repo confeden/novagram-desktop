@@ -129,6 +129,33 @@ constexpr auto kHideNotificationContentKey
 			"only the notification is silent."_q;
 }
 
+// Every description in this section used to sit open under its switch, and
+// eighteen of them turned the page into a wall nobody reads. Collapsed into
+// one row that says what it is, opened by pressing it. The text itself may now
+// run longer than the two sentences the old rule allowed: it costs no screen
+// space until somebody asks for it.
+void AddAbout(not_null<Ui::VerticalLayout*> container, const QString &text) {
+	const auto button = container->add(
+		object_ptr<Ui::SettingsButton>(
+			container,
+			rpl::single(UseRussianTexts()
+				? u"Описание функции:"_q
+				: u"What this does:"_q),
+			st::settingsButtonNoIcon));
+	const auto wrap = container->add(
+		object_ptr<Ui::SlideWrap<Ui::FlatLabel>>(
+			container,
+			object_ptr<Ui::FlatLabel>(
+				container,
+				rpl::single(text),
+				st::boxDividerLabel),
+			st::defaultBoxDividerLabelPadding));
+	wrap->hide(anim::type::instant);
+	button->setClickedCallback([=] {
+		wrap->toggle(!wrap->toggled(), anim::type::normal);
+	});
+}
+
 not_null<Button*> AddToggle(
 		not_null<Ui::VerticalLayout*> container,
 		const QString &text,
@@ -246,7 +273,7 @@ void FillProtection(
 	});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(PinAbout()));
+	AddAbout(container, PinAbout());
 	Ui::AddSkip(container);
 
 	const auto policyRefreshed = container->lifetime().make_state<
@@ -269,7 +296,7 @@ void FillProtection(
 	});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(PinPolicyAbout()));
+	AddAbout(container, PinPolicyAbout());
 	Ui::AddSkip(container);
 
 	AddToggle(
@@ -281,7 +308,7 @@ void FillProtection(
 		[](bool toggled) { SetShuffledKeypadEnabled(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(KeypadAbout()));
+	AddAbout(container, KeypadAbout());
 
 	if (ScreenGuardSupported()) {
 		Ui::AddSkip(container);
@@ -294,7 +321,7 @@ void FillProtection(
 			[](bool toggled) { SetScreenGuardEnabled(toggled); });
 
 		Ui::AddSkip(container);
-		Ui::AddDividerText(container, rpl::single(ScreenGuardAbout()));
+		AddAbout(container, ScreenGuardAbout());
 	}
 }
 
@@ -387,7 +414,7 @@ void FillAutoDelete(
 	});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(AutoDeleteAbout()));
+	AddAbout(container, AutoDeleteAbout());
 }
 
 [[nodiscard]] QString ReadStatusAbout() {
@@ -420,7 +447,7 @@ void FillReadStatus(
 		[=](bool toggled) { SetReadStatusEnabled(session, toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(ReadStatusAbout()));
+	AddAbout(container, ReadStatusAbout());
 }
 
 [[nodiscard]] QString DohTitle() {
@@ -527,7 +554,7 @@ void DohBox(not_null<Ui::GenericBox*> box) {
 	fill();
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(DohAbout()));
+	AddAbout(container, DohAbout());
 	Ui::AddSkip(container);
 
 	const auto add = container->add(
@@ -587,7 +614,7 @@ void FillDoh(
 	});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(DohAbout()));
+	AddAbout(container, DohAbout());
 }
 
 void FillCalls(not_null<Ui::VerticalLayout*> container) {
@@ -603,7 +630,7 @@ void FillCalls(not_null<Ui::VerticalLayout*> container) {
 		[=](bool toggled) { Calls::SetRelayOnly(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(Calls::RelayOnlyAbout()));
+	AddAbout(container, Calls::RelayOnlyAbout());
 }
 
 [[nodiscard]] QString FileNamesAbout() {
@@ -642,7 +669,7 @@ void FillFiles(not_null<Ui::VerticalLayout*> container) {
 		[](bool toggled) { SetMaskedFileNamesEnabled(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(FileNamesAbout()));
+	AddAbout(container, FileNamesAbout());
 
 	Ui::AddSkip(container);
 	AddToggle(
@@ -652,68 +679,124 @@ void FillFiles(not_null<Ui::VerticalLayout*> container) {
 		[](bool toggled) { SetStripMetadataEnabled(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(StripMetadataAbout()));
+	AddAbout(container, StripMetadataAbout());
 }
 
-// One row of the icon picker: a name on the left, the current value on the
-// right between two arrows. Arrows rather than a list, because the three axes
-// are walked rather than searched - the point is to see what changes, and the
-// preview above answers that before anything is applied.
-void AddDesignRow(
-		not_null<Ui::VerticalLayout*> container,
-		const QString &label,
-		Fn<QString()> value,
-		Fn<void(int)> shift,
-		Fn<void()> changed) {
-	const auto row = container->add(
-		object_ptr<Ui::FixedHeightWidget>(
-			container,
-			st::settingsButtonNoIcon.height));
-	const auto name = Ui::CreateChild<Ui::FlatLabel>(
-		row,
-		label,
-		st::defaultFlatLabel);
-	const auto current = Ui::CreateChild<Ui::FlatLabel>(
-		row,
-		value(),
-		st::defaultFlatLabel);
-	const auto prev = Ui::CreateChild<Ui::RoundButton>(
-		row,
-		rpl::single(QString::fromUtf8("\xe2\x80\xb9")),
-		st::defaultLightButton);
-	const auto next = Ui::CreateChild<Ui::RoundButton>(
-		row,
-		rpl::single(QString::fromUtf8("\xe2\x80\xba")),
-		st::defaultLightButton);
-	const auto step = [=](int delta) {
-		shift(delta);
-		current->setText(value());
-		changed();
-	};
-	prev->setClickedCallback([=] { step(-1); });
-	next->setClickedCallback([=] { step(1); });
+// One axis of the icon picker, drawn as a strip: the chosen variant in the
+// middle at full size, its neighbours smaller on either side, and a click on
+// any of them chooses it. Arrows moved one step at a time and showed nothing
+// of what was coming; a strip is what the choosing actually feels like.
+class DesignStrip final : public Ui::RpWidget {
+public:
+	DesignStrip(
+		QWidget *parent,
+		int count,
+		Fn<QImage(int index, int size)> render,
+		Fn<QString(int index)> name,
+		Fn<void(int index)> chosen)
+	: RpWidget(parent)
+	, _count(count)
+	, _render(std::move(render))
+	, _name(std::move(name))
+	, _chosen(std::move(chosen)) {
+		resize(width(), style::ConvertScale(94));
+		setCursor(style::cur_pointer);
+	}
 
-	row->sizeValue(
-	) | rpl::on_next([=](QSize size) {
-		const auto padding = st::settingsButtonNoIcon.padding;
-		const auto skip = st::defaultVerticalListSkip;
-		const auto top = [&](not_null<Ui::RpWidget*> widget) {
-			return (size.height() - widget->height()) / 2;
-		};
-		name->moveToLeft(padding.left(), top(name), size.width());
-		const auto right = size.width() - padding.right();
-		next->moveToLeft(right - next->width(), top(next), size.width());
-		// The value is centred in what is left between the two arrows, so a
-		// long name and a short one do not make the arrows jump about.
-		const auto valueRight = right - next->width() - skip;
-		const auto valueLeft = valueRight - current->width();
-		current->moveToLeft(valueLeft, top(current), size.width());
-		prev->moveToLeft(
-			valueLeft - skip - prev->width(),
-			top(prev),
-			size.width());
-	}, row->lifetime());
-}
+	void setCurrent(int index) {
+		_current = ((index % _count) + _count) % _count;
+		_cache.clear();
+		update();
+	}
+
+	[[nodiscard]] int current() const {
+		return _current;
+	}
+
+	void refresh() {
+		_cache.clear();
+		update();
+	}
+
+protected:
+	void paintEvent(QPaintEvent *e) override {
+		auto p = QPainter(this);
+		p.setRenderHint(QPainter::Antialiasing, true);
+		const auto ratio = style::DevicePixelRatio();
+		const auto center = width() / 2;
+		const auto middle = (height() - style::ConvertScale(20)) / 2;
+		for (auto step = -kSide; step <= kSide; ++step) {
+			const auto index = ((_current + step) % _count + _count) % _count;
+			const auto side = step ? kSmall : kLarge;
+			const auto x = center + step * kStep - side / 2;
+			const auto y = middle - side / 2;
+			auto i = _cache.find(index * 2 + (step ? 0 : 1));
+			if (i == end(_cache)) {
+				auto image = _render(index, side * ratio);
+				image.setDevicePixelRatio(ratio);
+				i = _cache.emplace(
+					index * 2 + (step ? 0 : 1),
+					std::move(image)).first;
+			}
+			if (!step) {
+				auto pen = QPen(st::activeButtonBg->c);
+				pen.setWidthF(st::lineWidth * 2);
+				p.setPen(pen);
+				p.setBrush(Qt::NoBrush);
+				const auto ring = side / 2 + style::ConvertScale(4);
+				p.drawEllipse(QPoint(center, middle), ring, ring);
+			}
+			p.setOpacity(step ? (1. - 0.22 * std::abs(step)) : 1.);
+			p.drawImage(QRect(x, y, side, side), i->second);
+			p.setOpacity(1.);
+		}
+		p.setFont(st::normalFont);
+		p.setPen(st::windowSubTextFg);
+		p.drawText(
+			QRect(0, height() - style::ConvertScale(20), width(), style::ConvertScale(18)),
+			style::al_top,
+			_name(_current));
+	}
+
+	void mousePressEvent(QMouseEvent *e) override {
+		const auto center = width() / 2;
+		const auto dx = e->pos().x() - center;
+		const auto step = (dx > kStep / 2)
+			? ((dx + kStep / 2) / kStep)
+			: (dx < -kStep / 2)
+			? -((-dx + kStep / 2) / kStep)
+			: 0;
+		if (step) {
+			choose(_current + step);
+		}
+	}
+
+	void wheelEvent(QWheelEvent *e) override {
+		const auto delta = e->angleDelta().y();
+		if (delta) {
+			choose(_current + ((delta > 0) ? -1 : 1));
+		}
+	}
+
+private:
+	static constexpr auto kSide = 3;
+
+	void choose(int index) {
+		setCurrent(index);
+		_chosen(_current);
+	}
+
+	const int _count = 0;
+	const Fn<QImage(int, int)> _render;
+	const Fn<QString(int)> _name;
+	const Fn<void(int)> _chosen;
+	base::flat_map<int, QImage> _cache;
+	int _current = 0;
+	const int kLarge = style::ConvertScale(52);
+	const int kSmall = style::ConvertScale(34);
+	const int kStep = style::ConvertScale(46);
+
+};
 
 void FillIcon(not_null<Ui::VerticalLayout*> container) {
 	using IconDesign::Design;
@@ -725,14 +808,19 @@ void FillIcon(not_null<Ui::VerticalLayout*> container) {
 
 	struct State {
 		Design draft;
+		DesignStrip *style = nullptr;
+		DesignStrip *texture = nullptr;
+		DesignStrip *accent = nullptr;
+		Ui::RpWidget *preview = nullptr;
 	};
 	const auto state = container->lifetime().make_state<State>();
 	state->draft = IconDesign::Current();
 
-	const auto side = 108;
+	const auto side = style::ConvertScale(112);
 	const auto skip = st::defaultVerticalListSkip;
 	const auto preview = container->add(
 		object_ptr<Ui::FixedHeightWidget>(container, side + 2 * skip));
+	state->preview = preview;
 	preview->paintRequest(
 	) | rpl::on_next([=] {
 		const auto ratio = style::DevicePixelRatio();
@@ -744,40 +832,69 @@ void FillIcon(not_null<Ui::VerticalLayout*> container) {
 			image);
 	}, preview->lifetime());
 
-	const auto refresh = [=] { preview->update(); };
-	const auto wrap = [](int value, int count) {
-		return ((value % count) + count) % count;
+	// Every strip draws the other two axes as they stand, so changing the style
+	// changes what the texture strip is showing - which is the whole reason
+	// these are pictures and not names.
+	const auto refreshAll = [=] {
+		preview->update();
+		for (const auto strip : { state->style, state->texture, state->accent }) {
+			if (strip) {
+				strip->refresh();
+			}
+		}
 	};
-	AddDesignRow(
-		container,
-		IconDesign::StyleLabel(),
-		[=] { return IconDesign::StyleName(state->draft.style); },
-		[=](int delta) {
-			state->draft.style = wrap(
-				state->draft.style + delta,
-				IconDesign::kStyles);
+	const auto add = [&](
+			int count,
+			Fn<Design(int index)> variant,
+			Fn<QString(int index)> name,
+			Fn<void(int index)> chosen) {
+		const auto strip = container->add(
+			object_ptr<DesignStrip>(
+				container,
+				count,
+				[=](int index, int size) {
+					return IconDesign::Render(variant(index), size, false);
+				},
+				name,
+				[=](int index) {
+					chosen(index);
+					refreshAll();
+				}));
+		return strip;
+	};
+
+	state->style = add(
+		IconDesign::kStyles,
+		[=](int index) {
+			auto result = state->draft;
+			result.style = index;
+			return result;
 		},
-		refresh);
-	AddDesignRow(
-		container,
-		IconDesign::TextureLabel(),
-		[=] { return IconDesign::TextureName(state->draft.texture); },
-		[=](int delta) {
-			state->draft.texture = wrap(
-				state->draft.texture + delta,
-				IconDesign::kTextures);
+		[](int index) { return IconDesign::StyleName(index); },
+		[=](int index) { state->draft.style = index; });
+	state->style->setCurrent(state->draft.style);
+
+	state->texture = add(
+		IconDesign::kTextures,
+		[=](int index) {
+			auto result = state->draft;
+			result.texture = index;
+			return result;
 		},
-		refresh);
-	AddDesignRow(
-		container,
-		IconDesign::AccentLabel(),
-		[=] { return IconDesign::AccentName(state->draft.accent); },
-		[=](int delta) {
-			state->draft.accent = wrap(
-				state->draft.accent + delta,
-				IconDesign::kAccents);
+		[](int index) { return IconDesign::TextureName(index); },
+		[=](int index) { state->draft.texture = index; });
+	state->texture->setCurrent(state->draft.texture);
+
+	state->accent = add(
+		IconDesign::kAccents,
+		[=](int index) {
+			auto result = state->draft;
+			result.accent = index;
+			return result;
 		},
-		refresh);
+		[](int index) { return IconDesign::AccentName(index); },
+		[=](int index) { state->draft.accent = index; });
+	state->accent->setCurrent(state->draft.accent);
 
 	Ui::AddSkip(container);
 	const auto russian = UseRussianTexts();
@@ -796,7 +913,7 @@ void FillIcon(not_null<Ui::VerticalLayout*> container) {
 	});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(IconDesign::SectionAbout()));
+	AddAbout(container, IconDesign::SectionAbout());
 }
 
 void FillStickers(not_null<Ui::VerticalLayout*> container) {
@@ -814,7 +931,7 @@ void FillStickers(not_null<Ui::VerticalLayout*> container) {
 		[](bool toggled) { CrashStickers::SetEnabled(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(CrashStickers::About()));
+	AddAbout(container, CrashStickers::About());
 }
 
 void FillStories(not_null<Ui::VerticalLayout*> container) {
@@ -832,7 +949,7 @@ void FillStories(not_null<Ui::VerticalLayout*> container) {
 		[](bool toggled) { SetStoriesHidden(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(StoriesHiddenAbout()));
+	AddAbout(container, StoriesHiddenAbout());
 }
 
 [[nodiscard]] QString NotifyPreviewsAbout() {
@@ -889,7 +1006,7 @@ void FillNotifications(
 		[=](bool toggled) { SetNotifyPreviewsWithheld(session, toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(NotifyPreviewsAbout()));
+	AddAbout(container, NotifyPreviewsAbout());
 
 	Ui::AddSkip(container);
 	Ui::AddSubsectionTitle(
@@ -907,7 +1024,7 @@ void FillNotifications(
 		});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(NotificationsAbout()));
+	AddAbout(container, NotificationsAbout());
 }
 
 void FillSending(not_null<Ui::VerticalLayout*> container) {
@@ -954,7 +1071,7 @@ void FillSending(not_null<Ui::VerticalLayout*> container) {
 		[](bool toggled) { SetNightSilentForChannels(toggled); });
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(NightSilentAbout()));
+	AddAbout(container, NightSilentAbout());
 }
 
 [[nodiscard]] QString UpdateAbout() {
@@ -1112,7 +1229,7 @@ void FillUpdates(not_null<Ui::VerticalLayout*> container) {
 	});
 
 	Ui::AddSkip(container);
-	Ui::AddDividerText(container, rpl::single(UpdateAbout()));
+	AddAbout(container, UpdateAbout());
 }
 
 class NovaGramSection final : public Section<NovaGramSection> {

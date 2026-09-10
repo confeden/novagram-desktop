@@ -64,6 +64,24 @@ void EnqueueNow(
 	not_null<Main::Session*> session,
 	const std::vector<FullMsgId> &ids);
 
+// What Erase evidence has managed so far in one chat. Read by its progress
+// window, which is the only thing that ever asks: the queue itself reports
+// once, at the end, in a toast.
+struct EraseProgress {
+	int queued = 0;
+	int replaced = 0;
+	int deleted = 0;
+	int skipped = 0;
+	int left = 0;
+	bool finished = false;
+};
+[[nodiscard]] EraseProgress EraseProgressFor(not_null<PeerData*> peer);
+
+// Fires whenever any of those numbers move, so the window can be built out of
+// the numbers rather than out of a callback chain through the queue.
+[[nodiscard]] rpl::producer<> EraseProgressChanges(
+	not_null<Main::Session*> session);
+
 [[nodiscard]] QString SettingsTitle();
 [[nodiscard]] QString SettingsLabel(not_null<Main::Session*> session);
 [[nodiscard]] QString FormatPeriod(int hours);

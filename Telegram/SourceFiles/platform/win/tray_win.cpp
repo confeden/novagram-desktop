@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/widgets/popup_menu.h"
 #include "window/window_controller.h"
+#include "novagram/nova_icon_design.h"
 #include "window/window_session_controller.h"
 #include "styles/style_window.h"
 
@@ -110,6 +111,21 @@ bool DarkTasbarValueValid/* = false*/;
 	static auto ScaledLogoNoMargin = base::flat_map<int, QImage>();
 	static auto ScaledLogoDark = base::flat_map<int, QImage>();
 	static auto ScaledLogoLight = base::flat_map<int, QImage>();
+
+	// NovaGram: these caches are keyed by size and by nothing else, so the tray
+	// went on drawing the mark it had scaled once - a design chosen in the
+	// settings changed the window and the taskbar and left the tray as it was
+	// until a restart. Cleared when the design changes, which is what the
+	// generation counter is for.
+	static auto CachedDesign = NovaGram::IconDesign::Generation();
+	if (const auto now = NovaGram::IconDesign::Generation()
+		; now != CachedDesign) {
+		CachedDesign = now;
+		ScaledLogo.clear();
+		ScaledLogoNoMargin.clear();
+		ScaledLogoDark.clear();
+		ScaledLogoLight.clear();
+	}
 
 	const auto darkMode = IsDarkTaskbar();
 	auto &scaled = (monochrome && darkMode)

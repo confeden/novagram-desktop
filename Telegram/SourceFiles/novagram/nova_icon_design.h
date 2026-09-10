@@ -49,6 +49,11 @@ void SetCurrent(Design design);
 // without a restart.
 [[nodiscard]] rpl::producer<Design> Changes();
 
+// Counts changes. The tray keeps its own cache of the icon, keyed by size
+// only, so a design change would otherwise leave the old mark down there until
+// a restart; the cache compares this number instead of the whole design.
+[[nodiscard]] int Generation();
+
 // True while the design is the stock one, which is the only case where the
 // shipped picture is used instead of a drawing.
 [[nodiscard]] bool IsOriginal(Design design);
