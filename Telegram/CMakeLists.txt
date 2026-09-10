@@ -1688,6 +1688,8 @@ PRIVATE
     novagram/nova_night_silent.h
     novagram/nova_notify_previews.cpp
     novagram/nova_notify_previews.h
+    novagram/nova_peer_id.cpp
+    novagram/nova_peer_id.h
     novagram/nova_pin.cpp
     novagram/nova_pin.h
     novagram/nova_pin_policy.cpp

@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_checker.h"
 #include "core/application.h"
 #include "novagram/nova_pin.h" // NovaGram::UseRussianTexts.
+#include "novagram/nova_peer_id.h"
 #include "core/click_handler_types.h"
 #include "dialogs/ui/dialogs_suggestions.h"
 #include "boxes/background_preview_box.h"
@@ -929,6 +930,21 @@ bool CopyPeerId(
 			.iconLottieSize = st::toastLottieIconSize,
 		});
 	}
+	return true;
+}
+
+// NovaGram: the profile behind a number printed in a message. The link only
+// exists where the number can actually be opened - PeerIds::Linkify makes
+// sure of that - but the answer is worked out again here, because a message
+// can sit on the screen for hours and what this client knows changes.
+bool OpenNovaPeerId(
+		Window::SessionController *controller,
+		const Match &match,
+		const QVariant &context) {
+	if (!controller) {
+		return false;
+	}
+	NovaGram::PeerIds::Open(controller, match->captured(1).toULongLong());
 	return true;
 }
 
@@ -1883,6 +1899,10 @@ const std::vector<LocalUrlHandler> &InternalUrlHandlers() {
 		{
 			u"^copy:(.+)$"_q,
 			CopyPeerId
+		},
+		{
+			u"^nova-peer:(\d+)$"_q,
+			OpenNovaPeerId
 		},
 		{
 			u"^about_tags$"_q,

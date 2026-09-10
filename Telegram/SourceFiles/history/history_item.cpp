@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_helpers.h"
 #include "history/history_unread_things.h"
 #include "history/history.h"
+#include "novagram/nova_peer_id.h"
 #include "iv/iv_data.h"
 #include "iv/editor/iv_editor_session.h"
 #include "iv/editor/iv_editor_page_blocks.h"
@@ -4489,6 +4490,10 @@ void HistoryItem::detectTextLinks(
 }
 
 void HistoryItem::setText(TextWithEntities textWithEntities) {
+	// NovaGram: the single door every message text passes, and so the only
+	// place a number can be turned into a link to the peer it names. Nothing
+	// is linked unless this client could actually open it - nova_peer_id.h.
+	NovaGram::PeerIds::Linkify(textWithEntities, &history()->session());
 	detectTextLinks(textWithEntities);
 	setTextValue((_media && _media->consumeMessageText(textWithEntities))
 		? TextWithEntities()
