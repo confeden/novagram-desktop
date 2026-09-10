@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_location.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
+#include "data/stickers/data_stickers.h"
 #include "novagram/nova_pin.h"
 #include "ui/image/image_prepare.h"
 #include "ui/painter.h"
@@ -36,7 +37,7 @@ constexpr auto kEnabledKey = "novagram_crash_stickers"_cs;
 constexpr auto kMaxSide = 1024;
 constexpr auto kMaxArea = 1024 * 1024;
 constexpr auto kMaxFileBytes = 4 * 1024 * 1024;
-constexpr auto kMaxUnpackedBytes = 2 * 1024 * 1024;
+constexpr auto kMaxUnpackedBytes = 4 * 1024 * 1024;
 constexpr auto kMaxDurationMs = crl::time(30 * 1000);
 
 // The Lottie file itself. Depth and the object count answer the two shapes a
@@ -46,7 +47,7 @@ constexpr auto kMaxDurationMs = crl::time(30 * 1000);
 // for its shape to be drawn as many times as the number says.
 constexpr auto kMaxDepth = 128;
 constexpr auto kMaxObjects = 200 * 1000;
-constexpr auto kMaxItems = 100 * 1000;
+constexpr auto kMaxItems = 1000 * 1000;
 constexpr auto kMaxRepeaterCopies = 100;
 constexpr auto kMaxFps = 120.;
 constexpr auto kMaxFrames = 1200.;
@@ -243,20 +244,31 @@ struct JsonScan {
 	} else if (content.size() > kMaxFileBytes) {
 		return true;
 	} else if (sticker->isLottie()) {
-		if ((content.size() < 2)
-			|| (uchar(content[0]) != 0x1F)
-			|| (uchar(content[1]) != 0x8B)) {
-			// A .tgs is a gzipped JSON and nothing else.
+		// A .tgs on the wire is gzipped JSON - but a client is free to keep it
+		// already inflated, and the Android half caches exactly that. Assuming
+		// the gzip there refused every real sticker in a pack, so both shapes
+		// are read here too, and this half is not left holding an assumption
+		// that has already been wrong once.
+		const auto gzipped = (content.size() >= 2)
+			&& (uchar(content[0]) == 0x1F)
+			&& (uchar(content[1]) == 0x8B);
+		const auto json = gzipped ? Images::UnpackGzip(content) : content;
+		if (gzipped && (json.size() > kMaxUnpackedBytes)) {
 			return true;
 		}
-		const auto unpacked = Images::UnpackGzip(content);
-		if (unpacked.size() > kMaxUnpackedBytes) {
-			return true;
+		auto i = 0;
+		while ((i != json.size()) && QChar::isSpace(uchar(json[i]))) {
+			++i;
 		}
-		// UnpackGzip hands back what it was given when the stream is broken or
-		// when it would inflate past its own five megabytes. Either way what
-		// comes back is not JSON, and LottieDangerous says so.
-		return LottieDangerous(unpacked);
+		if ((i == json.size()) || (json[i] != '{')) {
+			// Neither a gzip this build can inflate nor a JSON object -
+			// including what UnpackGzip hands back unchanged when the stream
+			// is broken. Not judged rather than accused: rlottie refuses
+			// garbage by itself, and it is a file that *parses* into something
+			// ruinous which this exists to stop.
+			return false;
+		}
+		return LottieDangerous(json);
 	} else if (sticker->isWebm()) {
 		// The container is left to FFmpeg, which is streamed rather than
 		// decoded into one buffer. What can be answered here is the size and
@@ -299,6 +311,25 @@ struct JsonScan {
 		return true;
 	}
 	return false;
+}
+
+// A sticker, and not merely something the sticker decoder is asked to draw.
+//
+// Emoji are outside this on purpose. A reaction, an animated emoji, a custom
+// emoji, a status, a topic icon, a dice roll and a gift animation are all .tgs
+// files and all used to arrive here, which is how an ordinary reaction came to
+// be labelled "Краш-стикер (обезврежен)" - a false accusation about a file
+// Telegram itself supplies.
+//
+// The line is who chose the file. This guard exists against a document another
+// user sends, and what a user can send comes out of a real set - one with an id
+// or a short name. Everything the server hands out from its own configuration
+// carries no set at all, and a custom emoji is marked as one by its set type.
+[[nodiscard]] bool IsSticker(not_null<DocumentData*> document) {
+	const auto sticker = document->sticker();
+	return sticker
+		&& (sticker->setType != Data::StickersType::Emoji)
+		&& !sticker->set.empty();
 }
 
 } // namespace
@@ -353,7 +384,7 @@ QString PlaceholderText() {
 }
 
 bool Blocked(not_null<DocumentData*> document) {
-	if (!Enabled() || !document->sticker()) {
+	if (!Enabled() || !IsSticker(document)) {
 		return false;
 	}
 	auto known = false;
@@ -363,7 +394,7 @@ bool Blocked(not_null<DocumentData*> document) {
 bool Blocked(
 		not_null<DocumentData*> document,
 		const QByteArray &content) {
-	if (!Enabled() || !document->sticker()) {
+	if (!Enabled() || !IsSticker(document)) {
 		return false;
 	}
 	auto known = false;
@@ -379,7 +410,7 @@ bool Blocked(
 
 bool Blocked(not_null<Data::DocumentMedia*> media) {
 	const auto document = media->owner();
-	if (!Enabled() || !document->sticker()) {
+	if (!Enabled() || !IsSticker(document)) {
 		return false;
 	}
 	// Nothing read yet means nothing to decode either, and ContentFor says so
