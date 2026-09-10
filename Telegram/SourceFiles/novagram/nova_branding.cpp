@@ -14,7 +14,7 @@ namespace NovaGram {
 namespace {
 
 // Both halves of the joint release tag. Bump together with the bases.
-constexpr auto kReleaseTag = "v7.2.7/12.10.1.2";
+constexpr auto kReleaseTag = "v7.2.8/12.10.1.2";
 constexpr auto kProjectUrl = "https://github.com/confeden/Novagram";
 
 // The name the application shows. It lives here and not in core/version.h,
