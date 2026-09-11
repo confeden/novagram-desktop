@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/file_upload.h"
 #include "mainwidget.h"
 #include "apiwrap.h"
+#include "novagram/nova_crash_stickers.h"
 
 namespace Api {
 namespace {
@@ -702,6 +703,16 @@ void SendExistingDocument(
 		MessageToSend &&message,
 		not_null<DocumentData*> document,
 		std::optional<MsgId> localMessageId) {
+	// NovaGram: what the guard refuses to draw it refuses to relay. The
+	// file would land on somebody whose client has no such guard, and
+	// passing a crash file on is worse than opening one. Every way of
+	// sending a sticker that already exists on the server comes through
+	// here, forwarding included.
+	if (NovaGram::CrashStickers::Blocked(document)) {
+		LOG(("NovaGram: refused to send document %1, the crash-sticker "
+			"guard does not pass it on.").arg(document->id));
+		return;
+	}
 	const auto inputMedia = [=] {
 		return MTP_inputMediaDocument(
 			MTP_flags(message.action.options.mediaSpoiler

@@ -365,16 +365,20 @@ QString Title() {
 
 QString About() {
 	return UseRussianTexts()
-		? u"Стикер, который не рисуется, а роняет клиент, не доходит до "
-			"декодера: вместо него остаётся подпись «Краш-стикер "
-			"(обезврежен)». Проверяются размер, разрешение, длительность и "
-			"устройство самого файла — настоящий стикер до этих ограничений "
-			"не дотягивает."_q
-		: u"A sticker built to kill the client instead of being drawn never "
-			"reaches the decoder: a \"Crash sticker (defused)\" caption takes "
-			"its place. The size, the dimensions, the length and the shape of "
-			"the file itself are checked - a sticker made by Telegram's own "
-			"rules is nowhere near the limits."_q;
+		? u"Файл, который выдаёт себя за стикер, а собран как бомба — "
+			"огромный после распаковки, с вложенностью в сотни уровней или с "
+			"повторителем на сотни копий, — не доходит до декодера и не "
+			"отправляется дальше; вместо него остаётся подпись «Краш-стикер "
+			"(обезврежен)». Настоящий стикер до этих границ не дотягивает и "
+			"близко. Обычный по устройству файл, который роняет чужой клиент "
+			"через ошибку в его декодере, так не распознаётся."_q
+		: u"A file that poses as a sticker but is built as a bomb - enormous "
+			"once unpacked, nested hundreds of levels deep, or repeating one "
+			"shape hundreds of times - never reaches the decoder, and is not "
+			"passed on either. A \"Crash sticker (defused)\" caption takes its "
+			"place. A real sticker is nowhere near those limits. This does not "
+			"recognise a file that is ordinary in shape and crashes some other "
+			"client through a bug in its decoder."_q;
 }
 
 QString PlaceholderText() {
