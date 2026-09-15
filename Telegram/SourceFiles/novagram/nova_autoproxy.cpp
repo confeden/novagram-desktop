@@ -65,6 +65,14 @@ public:
 		// Populate fallbacks on first launch if proxy list is empty
 		initFallbackList();
 
+		auto &proxySettings = Core::App().settings().proxy();
+		if (AutoProxyEnabled() && !proxySettings.isEnabled()) {
+			if (!proxySettings.list().empty()) {
+				Core::App().setCurrentProxy(proxySettings.list().front(), MTP::ProxyData::Settings::Enabled);
+				Core::App().saveSettingsDelayed();
+			}
+		}
+
 		_watchdogTimer.setCallback([this] { checkConnectionWatchdog(); });
 		_watchdogTimer.callEach(4000); // check every 4 seconds
 
@@ -111,12 +119,12 @@ public:
 			const auto typeStr = (current.type == MTP::ProxyData::Type::Mtproto)
 				? u"MTProto"_q
 				: u"SOCKS5"_q;
-			return u"Активен: %1 (%2:%3)"_q
+			return u"Активен: %1 (%2:%3)\nИсточник: GitHub MTProto Repo, SOCKS5 List"_q
 				.arg(typeStr)
 				.arg(current.host)
 				.arg(current.port);
 		}
-		return u"Прямое соединение (DC доступен)"_q;
+		return u"Прямое соединение (DC доступен)\nИсточник: GitHub MTProto Repo, SOCKS5 List"_q;
 	}
 
 private:
@@ -212,21 +220,36 @@ private:
 
 	void activateNextAvailableProxy() {
 		auto &proxySettings = Core::App().settings().proxy();
-		const auto &list = proxySettings.list();
-		if (list.empty()) {
+		if (proxySettings.list().empty()) {
 			initFallbackList();
 		}
 
 		const auto current = proxySettings.selected();
 		auto nextIndex = 0;
-		for (auto i = 0; i < int(list.size()); ++i) {
-			if (list[i].host == current.host && list[i].port == current.port) {
-				nextIndex = (i + 1) % list.size();
+		for (auto i = 0; i < int(proxySettings.list().size()); ++i) {
+			if (proxySettings.list()[i].host == current.host && proxySettings.list()[i].port == current.port) {
+				nextIndex = (i + 1) % proxySettings.list().size();
 				break;
 			}
 		}
 
+		if (proxySettings.list().size() > 1) {
+			proxySettings.removeFromList(current);
+			if (nextIndex > 0) {
+				nextIndex--;
+			}
+		} else {
+			fetchCloudList();
+		}
+
+		if (proxySettings.list().empty()) {
+			initFallbackList();
+			nextIndex = 0;
+		}
+
+		const auto &list = proxySettings.list();
 		if (!list.empty()) {
+			nextIndex = nextIndex % list.size();
 			Core::App().setCurrentProxy(list[nextIndex], MTP::ProxyData::Settings::Enabled);
 			Core::App().saveSettingsDelayed();
 		}

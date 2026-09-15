@@ -185,8 +185,8 @@ void FillBypass(
 	Ui::AddDividerText(
 		container,
 		rpl::single(russian
-			? u"Автоматически переключает быстрые MTProto Fake-TLS и SOCKS5 прокси при сбоях связи. Реклама и промо-каналы заблокированы."_q
-			: u"Automatically rotates fast Fake-TLS and SOCKS5 proxies when direct connection fails. Sponsored promo channels are blocked."_q));
+			? u"Автоматически переключает быстрые MTProto Fake-TLS и SOCKS5 прокси при сбоях связи. Реклама и промо-каналы заблокированы.\n\nИсточники прокси:\n• GitHub MTProto Repo (Fake-TLS)\n• SOCKS5 List (Verified)"_q
+			: u"Automatically rotates fast Fake-TLS and SOCKS5 proxies when direct connection fails. Sponsored promo channels are blocked.\n\nProxy sources:\n• GitHub MTProto Repo (Fake-TLS)\n• SOCKS5 List (Verified)"_q));
 
 	const auto refreshButton = container->add(
 		object_ptr<Ui::SettingsButton>(
