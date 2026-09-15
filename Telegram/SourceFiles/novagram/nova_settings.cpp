@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_pin_box.h"
 #include "novagram/nova_read_status.h"
 #include "novagram/nova_screen_guard.h"
+#include "novagram/nova_autoproxy.h"
 #include "settings/settings_common_session.h"
 #include "ui/layers/generic_box.h"
 #include "ui/ui_utility.h"
@@ -160,6 +161,41 @@ void FillProtection(
 		Ui::AddSkip(container);
 		Ui::AddDividerText(container, rpl::single(ScreenGuardAbout()));
 	}
+}
+
+void FillBypass(
+		not_null<Ui::VerticalLayout*> container,
+		not_null<Window::SessionController*> controller) {
+	const auto russian = UseRussianTexts();
+
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(russian ? u"Обход блокировок"_q : u"Anti-Censorship"_q));
+
+	AddToggle(
+		container,
+		(russian
+			? u"Умный выбор прокси (Zero-Config)"_q
+			: u"Auto-Proxy Bypass (Zero-Config)"_q),
+		AutoProxyEnabled(),
+		[](bool toggled) { SetAutoProxyEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	Ui::AddDividerText(
+		container,
+		rpl::single(russian
+			? u"Автоматически переключает быстрые MTProto Fake-TLS и SOCKS5 прокси при сбоях связи. Реклама и промо-каналы заблокированы.\n\nИсточники прокси:\n• GitHub MTProto Repo (Fake-TLS)\n• SOCKS5 List (Verified)"_q
+			: u"Automatically rotates fast Fake-TLS and SOCKS5 proxies when direct connection fails. Sponsored promo channels are blocked.\n\nProxy sources:\n• GitHub MTProto Repo (Fake-TLS)\n• SOCKS5 List (Verified)"_q));
+
+	const auto refreshButton = container->add(
+		object_ptr<Ui::SettingsButton>(
+			container,
+			rpl::single(russian ? u"Обновить список прокси сейчас"_q : u"Refresh Proxy List Now"_q),
+			st::settingsButtonNoIcon));
+	refreshButton->setClickedCallback([=] {
+		RefreshCloudProxies();
+	});
 }
 
 void PeriodBox(
@@ -375,6 +411,7 @@ void NovaGramSection::setupContent() {
 			rpl::producer<> showFinished) {
 		Ui::AddSkip(container);
 		FillProtection(container, controller);
+		FillBypass(container, controller);
 		FillAutoDelete(container, controller);
 		FillReadStatus(container, controller);
 		FillSending(container);

@@ -238,8 +238,9 @@ jobs:
         run: |
           set OUT=%TBUILD%\%REPO_NAME%\out\Debug
           mkdir artifact
-          move %OUT%\Telegram.exe artifact/
-          move %OUT%\Updater.exe artifact/
+          if exist %OUT%\NovaGram.exe move %OUT%\NovaGram.exe artifact\
+          if exist %OUT%\Telegram.exe move %OUT%\Telegram.exe artifact\
+          if exist %OUT%\Updater.exe move %OUT%\Updater.exe artifact\
       - uses: actions/upload-artifact@v7
         name: Upload artifact.
         if: (env.UPLOAD_ARTIFACT == 'true') || (github.ref == 'refs/heads/nightly')
