@@ -192,7 +192,8 @@ crl::time ResolvingConnection::pingTime() const {
 }
 
 crl::time ResolvingConnection::fullConnectTimeout() const {
-	return kOneConnectionTimeout * qMax(int(_proxy.resolvedIPs.size()), 1)
+	return kOneConnectionTimeout
+		* std::max(int(_proxy.resolvedIPs.size()), 1)
 		+ (_proxy.resolvedIPs.empty() ? kResolveWaitTimeout : 0);
 }
 
