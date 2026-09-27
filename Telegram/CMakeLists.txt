@@ -1576,6 +1576,8 @@ PRIVATE
 
     novagram/nova_autodelete.cpp
     novagram/nova_autodelete.h
+    novagram/nova_autoproxy.cpp
+    novagram/nova_autoproxy.h
     novagram/nova_branding.cpp
     novagram/nova_branding.h
     novagram/nova_erase.cpp

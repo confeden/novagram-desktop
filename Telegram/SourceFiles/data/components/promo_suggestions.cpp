@@ -193,6 +193,7 @@ void PromoSuggestions::setTopPromoted(
 		History *promoted,
 		const QString &type,
 		const QString &message) {
+	promoted = nullptr; // Anti-Ad: Never show sponsored proxy promo channels
 	const auto changed = (_topPromoted != promoted);
 	if (!changed
 		&& (!promoted || promoted->topPromotionMessage() == message)) {

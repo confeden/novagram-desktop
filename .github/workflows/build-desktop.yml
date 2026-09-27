@@ -1,0 +1,65 @@
+name: Build Telegram Desktop (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_id:
+        description: 'Telegram API ID (optional, defaults to test if empty)'
+        required: false
+        default: ''
+      api_hash:
+        description: 'Telegram API HASH (optional, defaults to test if empty)'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Maximize build space
+        run: |
+          Get-PSDrive C
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Ninja & CMake
+        run: |
+          choco install ninja cmake --no-progress -y
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Run Build
+        shell: powershell
+        run: |
+          if ("${{ github.event.inputs.api_id }}" -ne "") {
+            $env:NOVA_TELEGRAM_API_ID = "${{ github.event.inputs.api_id }}"
+            $env:NOVA_TELEGRAM_API_HASH = "${{ github.event.inputs.api_hash }}"
+          }
+          Write-Host "Starting build configuration..."
+          # Build commands for tdesktop / novagram
+          cmake -B out -S . -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+          cmake --build out --config Release --target Telegram
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaGram-Windows-x64
+          path: |
+            out/bin/Telegram.exe
+            out/Telegram.exe

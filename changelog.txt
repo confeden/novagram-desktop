@@ -1,3 +1,14 @@
+7.0.11 (21.09.26)
+
+- Устранены зависания приложения при большому количестве прокси.
+- Оптимизирована фоновая ротация.
+
+7.0.10 (17.09.26)
+
+- Fix application lag by limiting the number of added proxies.
+- Fix proxy rotation logic.
+- Fix compilation issues and macOS/Linux packaging.
+
 7.0.9 (05.08.26)
 
 - Add saving rich messages to HTML and importing them back.
@@ -1610,12 +1621,12 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 - You can disable all resource-intensive animations and animated stickers and emoji.
 - Power saving mode turns on automatically based on system battery saving settings.
 - Fully flexible playback speed settings for videos, voice and video messages.
-- Click the "1X" button to quickly switch between normal and adjusted speed – or hold it to set any speed between 0.5-2.5x.
+- Click the "1X" button to quickly switch between normal and adjusted speed вЂ“ or hold it to set any speed between 0.5-2.5x.
 - Improved sound quality for adjusted speed playback.
 - Read receipts in groups under 100 members now show reaction timestamps and when your messages were read.
 - When inviting people to groups, you can quickly send invite links to anyone who doesn't allow adding them directly.
 - Invite links now show previews in chats.
-- Fully translatable bots. Bot descriptions and ”What can this bot do?" sections can now be translated.
+- Fully translatable bots. Bot descriptions and вЂќWhat can this bot do?" sections can now be translated.
 - Starting a call now shows a confirmation window.
 - Fixed pasting images from Firefox on Windows.
 - Global Fn+F shortcut to switch active window to full screen mode on macOS.
@@ -1702,7 +1713,7 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 - Emoji Profile Pictures. Quickly create group and profile pictures from animated emoji and stickers with the new "Use an Emoji" option.
 - Emoji Categories. Filter stickers and emoji by categories like "love", "cheers" or "sleeping" in the sticker and emoji tabs.
 - Chat Translation. As a Premium user, translate entire chats in real time as you scroll them or receive new messages.
-- Media Permissions in Groups. Control whether members of your groups can send 9 distinct media types – like Photos, Voice or Video Messages.
+- Media Permissions in Groups. Control whether members of your groups can send 9 distinct media types вЂ“ like Photos, Voice or Video Messages.
 - Select Chats for Bots. Bot developers can now let users quickly select groups, channels or contacts that meet predefined criteria (more in @BotNews).
 - Open in New Window. Open chats or additional accounts in separate windows.
 
@@ -1759,7 +1770,7 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 4.5 (30.12.22)
 
 - Media with spoiler effects. You can wrap photos and videos you send in a fuzzy cover by selecting media in the attachment menu and tapping (...) > Hide With Spoiler.
-- Setting pictures for your contacts. You can choose your own picture for a contact – only you will see it on their profile.
+- Setting pictures for your contacts. You can choose your own picture for a contact вЂ“ only you will see it on their profile.
 - Suggested profile pictures. When editing your contacts, you can suggest a photo for their profile. It will take them just two clicks to add the picture you suggested.
 - Public profile pictures. If you only allow certain users to see your profile photos, you can set a public picture for everyone else.
 - Ultimate profile picture privacy. You can set 'Who can see my profile photos' to 'Nobody' and add some users or groups as exceptions.
@@ -1878,10 +1889,10 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 
 - Include animated emoji in messages and captions.
 - Premium users unlock over 500 new emoji, including custom packs with unique characters.
-- All users can view any emoji – and try them out in the Saved Messages chat.
+- All users can view any emoji вЂ“ and try them out in the Saved Messages chat.
 - Control who can send you voice and video messages with Telegram Premium.
 - Send a Premium subscription to any user from their profile.
-- Choose 3, 6, or 12 months – at a discount.
+- Choose 3, 6, or 12 months вЂ“ at a discount.
 
 4.0.4 beta (04.08.22)
 
@@ -1922,7 +1933,7 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 - Premium: Subscribers have a badge next to their name, showing they help support Telegram.
 - Premium: Show off your profile video that will be animated for everyone in chats and the chat list.
 - Premium: Sponsored Messages that are sometimes shown in public channels will no longer appear.
-- Enable join requests for your public groups – no invite links required.
+- Enable join requests for your public groups вЂ“ no invite links required.
 - Users who open the group will see an Apply to Join Group button.
 - Once approved by an admin, users will be able to participate in the chat.
 - Bots that are integrated into the attachment menu can be programmed to work in groups and channels.
@@ -2227,7 +2238,7 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 
 - Choose one of 8 new preset themes for any individual private chat.
 - Click on '...' menu > 'Change Colors' to pick a theme.
-- Both chat participants will see the same theme in that chat – on all their devices.
+- Both chat participants will see the same theme in that chat вЂ“ on all their devices.
 - Each new theme features colorful gradient message bubbles, beautifully animated backgrounds and unique background patterns.
 - All chat themes have day and night versions and will follow your overall dark mode settings.
 - Implement main window rounded corners on Windows 11.
@@ -2494,12 +2505,12 @@ the icon names are snap.telegram-desktop.{,{,-attention,-mute}-symbolic}
 
 2.7.2 (26.04.21)
 
-- Offer real goods and services for sale in any group, channel or bot – Telegram doesn't charge a commission.
-- Pay for goods securely using one of the 8 integrated payment providers – Telegram doesn't collect your payment info.
+- Offer real goods and services for sale in any group, channel or bot вЂ“ Telegram doesn't charge a commission.
+- Pay for goods securely using one of the 8 integrated payment providers вЂ“ Telegram doesn't collect your payment info.
 - See how this works in our @TestStore.
 - Schedule voice chats to let participants know about them in advance.
 - View a countdown to the voice chat and get notified when it starts.
-- Try two new, fully-featured versions of Telegram Web – both supporting animated stickers, dark mode, chat folders and more: https://webk.telegram.org/ and https://webz.telegram.org/.
+- Try two new, fully-featured versions of Telegram Web вЂ“ both supporting animated stickers, dark mode, chat folders and more: https://webk.telegram.org/ and https://webz.telegram.org/.
 
 2.7.1 (20.03.21)
 
@@ -3615,7 +3626,7 @@ Added formatting shortcuts. Select text and use:
 
 - Groups with unread mentions and replies are now marked with an '@' badge in the chats list.
 - Navigate new mentions and replies in a group using the new '@' button.
-- Mark your stickers as “favorite” to quickly access them from the redesigned sticker panel.
+- Mark your stickers as вЂњfavoriteвЂќ to quickly access them from the redesigned sticker panel.
 - Add an official sticker set for your group which all members will be able to use while chatting in your group (100+ member groups only).
 
 1.1.19 (01.08.17)
@@ -3788,13 +3799,13 @@ Added formatting shortcuts. Select text and use:
 
 1.0.26 (30.03.17)
 
-— Send MP4/MOV files as videos that will play right inside Telegram.
-— Click on the date in any chat to quickly jump to messages from a specific day.
-— Change your phone number in Settings.
-— Edit who can see your last seen time and who can add you to groups in Settings.
-— Edit your list of blocked users in Settings.
-— App now respects the "Do Not Disturb" setting for macOS notifications.
-— Bug fixes and other minor improvements.
+вЂ” Send MP4/MOV files as videos that will play right inside Telegram.
+вЂ” Click on the date in any chat to quickly jump to messages from a specific day.
+вЂ” Change your phone number in Settings.
+вЂ” Edit who can see your last seen time and who can add you to groups in Settings.
+вЂ” Edit your list of blocked users in Settings.
+вЂ” App now respects the "Do Not Disturb" setting for macOS notifications.
+вЂ” Bug fixes and other minor improvements.
 
 1.0.25 alpha (21.03.17)
 
@@ -4050,7 +4061,7 @@ Added formatting shortcuts. Select text and use:
 
 - Trending stickers. Check out and install noteworthy sticker packs from the new tab in Settings.
 - Archived stickers. Unused stickers are now archived automatically when you go over the 200 limit.
-- Group previews. Preview groups before joining them via invite link – see who else is in the group before joining.
+- Group previews. Preview groups before joining them via invite link вЂ“ see who else is in the group before joining.
 - New internal video player.
 - Improved design for chats.
 
@@ -4111,7 +4122,7 @@ Added formatting shortcuts. Select text and use:
 0.9.49 stable (16.05.16)
 
 - Edit your messages everywhere within 2 days after posting (press the up arrow button to edit your last message).
-- Mention people in groups by typing @ and selecting them from the list — even if they don't have a username.
+- Mention people in groups by typing @ and selecting them from the list вЂ” even if they don't have a username.
 
 0.9.48 stable (10.05.16)
 
@@ -4190,7 +4201,7 @@ Added formatting shortcuts. Select text and use:
 
 - Supergroups can now have 5,000 members (up from 1,000).
 - Groups of any size may be converted to supergroups.
-- Make your supergroup public by setting up a public link – anyone will be able to view the chat and join it.
+- Make your supergroup public by setting up a public link вЂ“ anyone will be able to view the chat and join it.
 - Pin messages to keep important updates visible and notify all members.
     'Select messages to delete, report as spam, block users, or remove all messages from a user'
 
@@ -4356,7 +4367,7 @@ Added formatting shortcuts. Select text and use:
 
 0.9 stable (24.09.15)
 
-- Introducing Channels — a great new way to broadcast your messages to unlimited audiences.
+- Introducing Channels вЂ” a great new way to broadcast your messages to unlimited audiences.
 - Other fixes and improvements.
 
 0.8.59 dev (23.09.15)
@@ -4745,7 +4756,7 @@ Added formatting shortcuts. Select text and use:
 0.7.9 (23.01.15)
 
 - Added Korean language.
-- Quick «open with» menu on Windows and OSX.
+- Quick В«open withВ» menu on Windows and OSX.
 
 0.7.8 (19.01.15)
 
@@ -5241,6 +5252,7 @@ Added formatting shortcuts. Select text and use:
 
 0.1.16 (29.11.13)
 
-- Added «Delete Message» and «Forward Message» items to context menus.
+- Added В«Delete MessageВ» and В«Forward MessageВ» items to context menus.
 - No PUSH-notifications are sent to your mobile phone from the currently active Telegram Win conversation.
 - Fixed issue with broken long links in messages copied to clipboard.
+

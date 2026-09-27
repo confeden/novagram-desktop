@@ -61,6 +61,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "novagram/nova_screen_guard.h"
+#include "novagram/nova_autoproxy.h"
 #include "media/view/media_view_overlay_widget.h"
 #include "media/view/media_view_open_common.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -302,6 +303,7 @@ void Application::run() {
 	ValidateScale();
 
 	refreshGlobalProxy(); // Depends on app settings being read.
+	NovaGram::StartAutoProxy();
 
 	if (const auto old = Local::oldSettingsVersion(); old < AppVersion) {
 		autoRegisterUrlScheme();
