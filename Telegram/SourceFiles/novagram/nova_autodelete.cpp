@@ -57,11 +57,13 @@ constexpr auto kDeleteBatch = 100;
 // once is felt on the screen.
 constexpr auto kBatchPeers = 2;
 
-// The gap between replacing the text and deleting the message. The promise
-// spells it out as "изменить на точку, а через минуту стереть": the edited
-// version has to reach the other side before the message disappears,
-// otherwise the replacement never gets seen and the step is pointless.
-constexpr auto kReplaceToDeleteDelay = TimeId(60);
+// The gap between replacing the text and deleting the message. The edited
+// version has to reach the other side before the message disappears, otherwise
+// the replacement never gets seen and the step is pointless; ten seconds is
+// enough for the edit to land while keeping a long Erase evidence run quick.
+// A replacement that cannot be made at all does not wait this out - the entry
+// goes straight to deletion (see replaceFailed and the readyToDelete path).
+constexpr auto kReplaceToDeleteDelay = TimeId(10);
 
 // A flood error that does not spell out the number of seconds still has to
 // stop the queue for a while, otherwise the next tick walks into the same wall.
@@ -410,18 +412,26 @@ void Runner::schedule() {
 	// Nothing can go right now. If the only thing in the way is a flood wait,
 	// wake up when the server says it ends; the extra interval keeps the tick
 	// from firing a moment too early.
+	// Two things can keep an entry: its own dueAt - the ten seconds between
+	// the dot and the deletion - and a flood wait the server asked for. Waking
+	// only for the second left the first to the minute tick, so a replacement
+	// written just after a tick stood as a visible dot in the other side's
+	// chat for a whole minute (G72).
 	auto wakeAt = TimeId(0);
+	auto padded = false;
 	for (const auto &entry : _state.queue) {
-		if (entry.dueAt > now) {
-			continue;
-		}
-		const auto until = floodUntil(entry.stage);
+		const auto flood = floodUntil(entry.stage);
+		const auto until = std::max(entry.dueAt, flood);
 		if (!wakeAt || until < wakeAt) {
 			wakeAt = until;
+			// The extra interval is for the server's deadline, which is worth
+			// not crowding; an entry's own deadline needs no margin.
+			padded = (flood >= entry.dueAt);
 		}
 	}
 	const auto delay = wakeAt
-		? (crl::time(wakeAt - now) * 1000 + kBusyInterval)
+		? (crl::time(std::max(wakeAt - now, TimeId(0))) * 1000
+			+ (padded ? kBusyInterval : crl::time(0)))
 		: kTickInterval;
 	_timer.callOnce(std::min(delay, kTickInterval));
 }

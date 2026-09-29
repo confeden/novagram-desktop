@@ -80,6 +80,31 @@ struct JsonScan {
 	bool balanced = false;
 };
 
+// How many leading bytes the Lottie reader throws away before it parses. This
+// repeats Lottie::ReadUtf8 (lib_lottie/lottie/lottie_common.cpp) case for case
+// on purpose, and must keep repeating it: the guard has to judge exactly the
+// bytes the decoder will judge. With a byte order mark in front, the reader
+// skipped it and parsed the file happily while the guard, looking for '{' at
+// the front, decided the content was not JSON at all and said "not judged" -
+// so three bytes turned the whole guard off, and the verdict was remembered.
+// lib_lottie is vendored upstream and is not patched for this.
+[[nodiscard]] int BomSkip(const QByteArray &data) {
+	if (data.size() < 4) {
+		return 0;
+	}
+	const auto bom = uint32(uint8(data[0]))
+		| (uint32(uint8(data[1])) << 8)
+		| (uint32(uint8(data[2])) << 16)
+		| (uint32(uint8(data[3])) << 24);
+	return ((bom == 0xFFFE0000U) || (bom == 0x0000FEFFU))
+		? 4
+		: (((bom & 0xFFFFU) == 0xFFFEU) || ((bom & 0xFFFFU) == 0xFEFFU))
+		? 2
+		: (((bom & 0xFFFFFFU) == 0xBFBBEFU)
+			? 3
+			: 0);
+}
+
 // A pass over the bytes, before any parser sees them. It answers how deep the
 // file goes without recursing itself, which is the whole point: the parser
 // that would answer the same question is the one being protected.
@@ -256,7 +281,13 @@ struct JsonScan {
 		if (gzipped && (json.size() > kMaxUnpackedBytes)) {
 			return true;
 		}
-		auto i = 0;
+		// From the same offset the decoder starts at, never from zero - and
+		// the same slice is what gets judged below, because LottieDangerous
+		// calls a parse error dangerous, and Qt's parser refuses a byte order
+		// mark that the Lottie reader would have stepped over. Judging the
+		// unsliced bytes would refuse ordinary stickers that carry one.
+		const auto skip = BomSkip(json);
+		auto i = skip;
 		while ((i != json.size()) && QChar::isSpace(uchar(json[i]))) {
 			++i;
 		}
@@ -268,7 +299,7 @@ struct JsonScan {
 			// ruinous which this exists to stop.
 			return false;
 		}
-		return LottieDangerous(json);
+		return LottieDangerous(skip ? json.mid(skip) : json);
 	} else if (sticker->isWebm()) {
 		// The container is left to FFmpeg, which is streamed rather than
 		// decoded into one buffer. What can be answered here is the size and
@@ -321,15 +352,24 @@ struct JsonScan {
 // be labelled "Краш-стикер (обезврежен)" - a false accusation about a file
 // Telegram itself supplies.
 //
-// The line is who chose the file. This guard exists against a document another
-// user sends, and what a user can send comes out of a real set - one with an id
-// or a short name. Everything the server hands out from its own configuration
-// carries no set at all, and a custom emoji is marked as one by its set type.
+// The line is who chose the file: this guard exists against a document another
+// user sends. A custom emoji is marked as one by its set type; everything else
+// the server hands out from its own configuration names one of its own sets,
+// which is what StickerData::serviceSet records.
+//
+// It used to read "has a set identifier" instead, and that was wrong in both
+// directions. UpdateStickerSetIdentifier keeps an identifier only for
+// inputStickerSetID, so a sticker from a set named by its short name had none
+// either and went unjudged - and so did anything a sender simply labelled
+// inputStickerSetEmpty, which is three words in a modified client and turned
+// the guard off completely. Asking about the service sets by name instead
+// keeps the narrowing this line was added for (a reaction must never be
+// accused, G53) without leaving that door.
 [[nodiscard]] bool IsSticker(not_null<DocumentData*> document) {
 	const auto sticker = document->sticker();
 	return sticker
 		&& (sticker->setType != Data::StickersType::Emoji)
-		&& !sticker->set.empty();
+		&& !sticker->serviceSet;
 }
 
 } // namespace

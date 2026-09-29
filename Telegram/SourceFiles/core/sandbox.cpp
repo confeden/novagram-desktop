@@ -396,8 +396,14 @@ void Sandbox::setupScreenScale() {
 		// 110% for Retina screens by default.
 		cSetScreenScale((useRatio == 2) ? 110 : style::kScaleDefault);
 	} else {
+		// NovaGram: the automatic scale is 110% of the screen's, the way the
+		// Retina branch above bumps it, so "Default scale" in the settings and
+		// every profile left on it open 10% larger than upstream, while a scale
+		// chosen by hand stays as it was. Rounded half up to the 5% step of the
+		// settings slider, which only marks a value lying on that grid.
+		const auto novaScreenScale = (screenScale * 11 + 25) / 50 * 5;
 		cSetScreenScale(std::clamp(
-			screenScale,
+			novaScreenScale,
 			style::kScaleMin,
 			style::MaxScaleForRatio(useRatio)));
 	}

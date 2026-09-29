@@ -418,26 +418,22 @@ void PasscodeLockWidget::submit() {
 		_passcode->showError();
 		return;
 	}
-	// The emergency pin is checked before both delay gates on purpose: under
-	// coercion the wrong pins have already been burned, so a check placed
-	// after the lockout would be unavailable in exactly the one situation the
-	// pin exists for. Matching it neither touches the failure counter nor
-	// clears it, so an attacker guessing at it gains nothing either way.
-	if (_novaPinMode && NovaGram::CheckEmergencyPin(entered)) {
-		// May destroy this widget - and, with synchronous deauthorization on
-		// and a session running, may instead return while the line that warns
-		// the account's other clients is still on its way. The field is
-		// cleared either way, so that the screen reads as an entry being
-		// checked rather than one that hung with the pin still in it.
-		_passcode->setText(QString());
-		NovaGram::RunEmergencyWipe(entered);
+	// The decision itself lives in NovaGram::GatePasscodeEntry, not here: the
+	// box upstream added over a call panel accepts a passcode while locked too,
+	// and a copy of these rules per screen is how one of them ends up without
+	// them (I15). Only what the screen shows differs.
+	const auto clearField = [=] { _passcode->setText(QString()); };
+	switch (NovaGram::GatePasscodeEntry(entered, clearField)) {
+	case NovaGram::PasscodeGate::EmergencyWipeStarted:
+		// The field was cleared inside, before anything was destroyed. This
+		// widget may already be gone, so nothing of it may be touched here.
 		return;
-	}
-
-	if (_novaPinMode && NovaGram::LockoutRemaining() > 0) {
+	case NovaGram::PasscodeGate::LockedOut:
 		refreshNovaLockout();
 		_passcode->showError();
 		return;
+	case NovaGram::PasscodeGate::Proceed:
+		break;
 	}
 
 	switch (TryPasscode(entered)) {
@@ -450,19 +446,13 @@ void PasscodeLockWidget::submit() {
 		update();
 		return;
 	case PasscodeAttempt::Wrong:
-		// Upstream's TryPasscode already counted the bad try; this is the
-		// fork's own lockout, which outlives a restart.
-		if (_novaPinMode) {
-			NovaGram::RecordFailedAttempt();
-		}
+		NovaGram::NotePasscodeChecked(false);
 		error();
 		return;
 	case PasscodeAttempt::Correct:
 		break;
 	}
-	if (_novaPinMode) {
-		NovaGram::ResetFailedAttempts();
-	}
+	NovaGram::NotePasscodeChecked(true);
 
 	Core::App().unlockPasscode(); // Destroys this widget.
 }

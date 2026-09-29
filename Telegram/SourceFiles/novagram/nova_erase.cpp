@@ -45,7 +45,7 @@ class Collector final : public std::enable_shared_from_this<Collector> {
 public:
 	Collector(not_null<History*> history, TimeId since);
 
-	void start(Fn<void(int found)> done);
+	void start(Fn<void(int found, int reactions)> done);
 
 private:
 	void requestPage();
@@ -56,7 +56,7 @@ private:
 	const TimeId _since = 0;
 	std::vector<FullMsgId> _found;
 	std::shared_ptr<Collector> _hold;
-	Fn<void(int found)> _done;
+	Fn<void(int found, int reactions)> _done;
 	MsgId _offsetId = 0;
 
 };
@@ -66,7 +66,7 @@ Collector::Collector(not_null<History*> history, TimeId since)
 , _since(since) {
 }
 
-void Collector::start(Fn<void(int found)> done) {
+void Collector::start(Fn<void(int found, int reactions)> done) {
 	_done = std::move(done);
 	_hold = shared_from_this();
 	requestPage();
@@ -156,7 +156,7 @@ void Collector::finish() {
 	EnqueueNow(&_history->session(), _found);
 	const auto found = int(_found.size());
 	if (const auto done = _done) {
-		done(found);
+		done(found, reactions);
 	}
 	_hold = nullptr;
 }
@@ -205,19 +205,25 @@ void Collector::finish() {
 
 } // namespace
 
+// How often the window re-reads the counters while the queue works. The queue
+// also fires a change signal, but the window does not lean on it reaching here:
+// it polls the live counters instead, so the numbers move no matter what, and a
+// missed signal can never leave it frozen at zero.
+constexpr auto kPollInterval = crl::time(300);
+
 // The window that stays up while the queue works.
 //
 // Erase evidence used to answer with one toast - "queued: 47" - and then went
 // quiet for as long as the queue took, which for a long correspondence was
 // minutes. Nothing on the screen said whether it was working, finished or
-// stuck, and the toast that eventually reported the outcome could easily be
-// missed. So the work is now watched: the numbers move while it runs, the
-// window cannot be dismissed until it is through, and afterwards it waits ten
-// seconds - or until it is closed - so the result is actually read.
+// stuck. So the work is now watched: four lines, the numbers moving while it
+// runs, the window undismissable until it is through, and afterwards a ten
+// second linger - or a Close - so the result is actually read.
 void ProgressBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<PeerData*> peer,
-		int found) {
+		int found,
+		int reactions) {
 	const auto russian = UseRussianTexts();
 	box->setTitle(rpl::single(EraseMenuText()));
 	box->setWidth(st::boxWideWidth);
@@ -225,6 +231,7 @@ void ProgressBox(
 	box->setCloseByOutsideClick(false);
 
 	struct State {
+		base::Timer poll;
 		base::Timer close;
 		bool finished = false;
 	};
@@ -238,37 +245,28 @@ void ProgressBox(
 
 	const auto update = [=] {
 		const auto progress = EraseProgressFor(peer);
-		const auto queued = progress.queued ? progress.queued : found;
-		const auto done = progress.deleted + progress.skipped;
+		const auto total = progress.queued ? progress.queued : found;
 		auto text = QStringList();
-		text.push_back(russian
-			? u"Найдено ваших сообщений: %1"_q.arg(queued)
-			: u"Messages of yours found: %1"_q.arg(queued));
-		text.push_back(russian
-			? u"Уничтожено: %1 · заменено на точку: %2 · пропущено: %3"_q
-				.arg(progress.deleted)
-				.arg(progress.replaced)
-				.arg(progress.skipped)
-			: u"Destroyed: %1 · replaced with a dot: %2 · skipped: %3"_q
-				.arg(progress.deleted)
-				.arg(progress.replaced)
-				.arg(progress.skipped));
-		if (!progress.finished) {
-			text.push_back(russian
-				? u"Осталось в очереди: %1. Окно закроется само, когда очередь "
-					"дойдёт до конца — не закрывайте его, чтобы видеть ход."_q
-					.arg(progress.left)
-				: u"Left in the queue: %1. This window closes itself once the "
-					"queue is through - leave it up to watch."_q
-					.arg(progress.left));
-		} else {
-			text.push_back(russian
-				? u"Готово. Окно закроется через несколько секунд."_q
-				: u"Done. This window closes in a few seconds."_q);
-		}
-		label->setText(text.join(u"\n\n"_q));
+		text.push_back((russian
+			? u"Найдено сообщений: %1"_q
+			: u"Messages found: %1"_q).arg(total));
+		text.push_back((russian
+			? u"Найдено реакций: %1"_q
+			: u"Reactions found: %1"_q).arg(reactions));
+		text.push_back((russian
+			? u"Изменено перед удалением: %1/%2"_q
+			: u"Replaced before deletion: %1/%2"_q)
+			.arg(progress.replaced)
+			.arg(total));
+		text.push_back((russian
+			? u"Удалено: %1/%2"_q
+			: u"Deleted: %1/%2"_q)
+			.arg(progress.deleted)
+			.arg(total));
+		label->setText(text.join(u"\n"_q));
 		if (progress.finished && !state->finished) {
 			state->finished = true;
+			state->poll.cancel();
 			// Only now may it be dismissed, and only now does it carry a
 			// button: while the queue runs there is nothing to press that
 			// would stop it, and a button that does nothing is a lie.
@@ -280,10 +278,11 @@ void ProgressBox(
 			state->close.callOnce(kLingerAfterFinished);
 		}
 	};
+	state->poll.setCallback(update);
 	update();
-	EraseProgressChanges(
-		&peer->session()
-	) | rpl::on_next(update, box->lifetime());
+	if (!state->finished) {
+		state->poll.callEach(kPollInterval);
+	}
 }
 
 QString EraseMenuText() {
@@ -317,17 +316,26 @@ void EraseEvidenceBox(
 				const auto collector = std::make_shared<Collector>(
 					history,
 					since);
-				collector->start([=](int found) {
+				collector->start([=](int found, int reactions) {
 					if (!found) {
-						show->showToast(russian
-							? u"Ваших сообщений за этот период не найдено"_q
-							: u"No messages of yours in this period"_q);
+						// Reactions are withdrawn during the walk, before the
+						// window would open, so a run that found only reactions
+						// still has something to report.
+						show->showToast(!reactions
+							? (russian
+								? u"Ваших сообщений за этот период не найдено"_q
+								: u"No messages of yours in this period"_q)
+							: (russian
+								? u"Снято реакций: %1. Ваших сообщений за этот "
+									"период не найдено."_q.arg(reactions)
+								: u"Reactions removed: %1. No messages of yours "
+									"in this period."_q.arg(reactions)));
 						return;
 					}
 					// The queue starts working the moment it is handed the list,
 					// and this window is what makes that visible while it does.
 					show->showBox(Box([=](not_null<Ui::GenericBox*> progress) {
-						ProgressBox(progress, peer, found);
+						ProgressBox(progress, peer, found, reactions);
 					}));
 				});
 			},

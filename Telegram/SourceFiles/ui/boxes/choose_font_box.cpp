@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/event_filter.h"
 #include "lang/lang_keys.h"
+#include "novagram/nova_fonts.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/chat/chat_style.h"
 #include "ui/effects/ripple_animation.h"
@@ -569,7 +570,7 @@ std::vector<Selector::Entry> Selector::FullList(const QString &now) {
 
 [[nodiscard]] PreviewRequest PrepareRequest(const QString &family) {
 	return {
-		.family = family,
+		.family = NovaGram::ResolveFontFamily(family),
 		.msgBg = st::msgInBg->c,
 		.msgShadow = st::msgInShadow->c,
 		.replyBar = st::msgInReplyBarColor->c,

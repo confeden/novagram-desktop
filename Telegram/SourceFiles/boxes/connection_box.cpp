@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mtproto/proxy_check.h"
 #include "mtproto/web_proxy/web_proxy_transport.h"
 #include "novagram/nova_pin.h" // NovaGram::UseRussianTexts.
+#include "novagram/nova_decoy.h"
 #include "qr/qr_generate.h"
 #include "settings/settings_common.h"
 #include "storage/localstorage.h"
@@ -104,8 +105,12 @@ using ProxyData = MTP::ProxyData;
 // or offered. Upstream's wording is fair about the page, but it says nothing
 // about what the fork stops covering, and that is the part a NovaGram user is
 // entitled to know. Two sentences: the mechanics, then the one limit that
-// matters here (D4).
+// matters here (D4). The decoy keeps upstream's wording: this one names
+// NovaGram (I4).
 [[nodiscard]] QString WebProxyWarning() {
+	if (NovaGram::Decoy::Active()) {
+		return tr::lng_proxy_web_warning(tr::now);
+	}
 	return NovaGram::UseRussianTexts()
 		? u"Прокси типа WEB запускает внутри клиента веб-страницу поставщика "
 			u"и пропускает через её JavaScript весь трафик Telegram. Защита "

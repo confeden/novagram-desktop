@@ -64,6 +64,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_branding.h"
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_device_lock.h"
+#include "novagram/nova_fonts.h"
 #include "novagram/nova_pin_policy.h"
 #include "novagram/nova_screen_guard.h"
 #include "novagram/nova_metadata.h"
@@ -110,7 +111,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <QtCore/QStandardPaths>
 #include <QtCore/QMimeDatabase>
-#include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QScreen>
 
@@ -144,24 +144,6 @@ void SetCrashAnnotationsGL() {
 		"OpenGL",
 		Core::App().settings().disableOpenGL() ? "Disabled" : "Enabled");
 #endif // DESKTOP_APP_USE_ANGLE
-}
-
-// NovaGram: on Windows the built-in Open Sans looks noticeably lighter than
-// the system UI font, so the "Default" font means the system semibold face.
-// Going through SetCustomFont (and not through the Open Sans fallback inside
-// style::internal::ResolveFont) keeps the usual x-height normalization.
-[[nodiscard]] QString ResolveCustomFontFamily(QString chosen) {
-#ifdef Q_OS_WIN
-	// Asking QFontDatabase whether the family exists is unreliable here: Qt 6
-	// often reports Segoe UI Semibold as a style of Segoe UI rather than as a
-	// family of its own, and the check silently dropped the default. Naming
-	// the family directly is safe, because an unknown family falls back to the
-	// same system default an empty one would give.
-	if (chosen.isEmpty()) {
-		return u"Segoe UI Semibold"_q;
-	}
-#endif // Q_OS_WIN
-	return chosen;
 }
 
 base::options::toggle OptionSkipUrlSchemeRegister({
@@ -336,7 +318,8 @@ void Application::run() {
 
 	startLocalStorage();
 
-	style::SetCustomFont(ResolveCustomFontFamily(settings().customFontFamily()));
+	style::SetCustomFont(
+		NovaGram::ResolveFontFamily(settings().customFontFamily()));
 	style::internal::StartFonts();
 
 	// Installed before any window exists, so that no window is ever shown

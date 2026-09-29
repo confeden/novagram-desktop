@@ -64,6 +64,46 @@ void ResetFailedAttempts();
 [[nodiscard]] QString FormatLockoutLeft(crl::time remaining);
 [[nodiscard]] QString LockoutMessage(crl::time remaining);
 
+// What the fork decides about a passcode before upstream's own check sees it,
+// and what it records afterwards. Every screen that can accept a passcode while
+// the application is locked must go through these two - not only the lock
+// screen. Upstream added a second such screen in v7.2.x (the box opened from a
+// call panel over the lock, window/window_unlock_passcode_box.cpp) and it
+// reached Local::checkPasscode directly, so on that screen the emergency pin
+// did nothing, the fork's lockout was neither consulted nor advanced, and a
+// correct entry left it armed. That is invariant I15's bug class exactly: a
+// merge does not delete a hook, it adds a path around it. Keeping the decision
+// here, rather than repeated at each screen, is what makes the next such screen
+// a one-line change instead of a silent hole.
+//
+// Outside pin mode both are inert, so a caller may use them unconditionally.
+enum class PasscodeGate {
+	// Nothing in the way: run upstream's check, then call NotePasscodeChecked.
+	Proceed,
+	// The emergency pin matched and the destruction has been started. The
+	// caller must return at once and touch nothing of its own: the wipe may
+	// already have destroyed the screen this was called from. Whatever the
+	// screen needs to do to itself belongs in `beforeWipe` below.
+	EmergencyWipeStarted,
+	// The fork's own lockout, which outlives a restart, is still running. The
+	// caller refuses without asking upstream, and shows LockoutMessage().
+	LockedOut,
+};
+// `beforeWipe` runs after the emergency pin has matched and before any of the
+// destruction starts. Clearing the entry field belongs there and nowhere else:
+// the wipe can destroy the screen that called this, so by the time
+// EmergencyWipeStarted comes back the field may no longer exist. Making it an
+// argument rather than something each caller remembers to do first is the point
+// - the ordering is then not possible to get wrong.
+[[nodiscard]] PasscodeGate GatePasscodeEntry(
+	const QString &entered,
+	Fn<void()> beforeWipe = nullptr);
+
+// `correct` is upstream's verdict. Keeps the fork's lockout counter, which is
+// not the same as upstream's in-memory bad-try count: this one survives a
+// restart, and a correct passcode has to clear it wherever it was entered.
+void NotePasscodeChecked(bool correct);
+
 // Expects the accounts to be not started yet, so no data file is open. The pin
 // is the one just entered: it unlocks the stored identity for the decoy.
 //

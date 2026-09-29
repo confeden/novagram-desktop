@@ -71,6 +71,16 @@ void NoteHeldRead(not_null<History*> history, MsgId tillId);
 // The furthest position written down by NoteHeldRead, or zero.
 [[nodiscard]] MsgId HeldReadTill(not_null<History*> history);
 
+// Puts that position back into the dialog on this client. The server is never
+// told about it, so every read marker it sends - at each start, and at every
+// refresh of the dialog entry - says the messages are unread, and the dialog
+// came back unread after each restart although the user had read it. Moves the
+// local position forward only and sends nothing. topMessageId is the newest
+// message the server knows in the dialog; when it is not beyond the position the
+// counter is zero, otherwise it is counted from the loaded messages if they
+// reach, and if they do not nothing changes until they do.
+void ApplyHeldRead(not_null<History*> history, MsgId topMessageId = MsgId(0));
+
 // Where the dialogs that drop what the other side sends are written down.
 //
 // Kept in the same sealed blob as the rules rather than in a preference of its

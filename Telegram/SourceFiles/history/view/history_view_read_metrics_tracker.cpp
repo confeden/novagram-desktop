@@ -347,8 +347,15 @@ void ReadMetricsTracker::finalizeAll() {
 	_timer.cancel();
 }
 
-bool ReadMetricsTracker::ShouldTrack(not_null<HistoryItem*> item) {
-	return item->isRegular() && item->hasViews();
+bool ReadMetricsTracker::ShouldTrack(not_null<HistoryItem*> /*item*/) {
+	// NovaGram: nothing is tracked, because nothing is reported - see
+	// Api::ReadMetrics::add(). Refusing here and not only at the send is what
+	// removes the work: push() is called for every message in every visible-area
+	// pass, and a tracked message is then re-examined on a timer for as long as
+	// it stays on screen. With this false, restartTimer() finds _tracked empty
+	// and cancels, so an open chat runs no timer of its own for this at all.
+	// Upstream tracked `item->isRegular() && item->hasViews()`.
+	return false;
 }
 
 } // namespace HistoryView

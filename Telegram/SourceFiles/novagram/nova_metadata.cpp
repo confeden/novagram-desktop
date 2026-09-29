@@ -189,13 +189,16 @@ std::atomic<int> Mirrored = -1;
 			: ((d << 24) | (c << 16) | (b << 8) | a);
 	};
 	const auto offset = int(u32(4));
-	if (offset < 8 || offset + 2 > tiffSize) {
+	// Written as a subtraction, never as `offset + 2 > tiffSize`: the offset is
+	// four bytes out of the file, so it reaches INT_MAX, and the addition then
+	// wraps negative and lets the read through. tiffSize is at least 8 here.
+	if (offset < 8 || offset > tiffSize - 2) {
 		return 0;
 	}
 	const auto count = u16(offset);
 	for (auto i = 0; i != count; ++i) {
 		const auto entry = offset + 2 + (i * 12);
-		if (entry + 12 > tiffSize) {
+		if (entry > tiffSize - 12) {
 			return 0;
 		} else if (u16(entry) == 0x0112) {
 			return u16(entry + 8);
@@ -204,17 +207,18 @@ std::atomic<int> Mirrored = -1;
 	return 0;
 }
 
-} // namespace
-
-bool JpegNeedsRotation(const QByteArray &bytes) {
+// The orientation the file asks for, or 0 when it asks for nothing. 1 means
+// "as it lies", so anything above 1 is a picture whose pixels are not the way
+// up it wants to be seen.
+[[nodiscard]] int JpegRotation(const QByteArray &bytes) {
 	if (!IsJpeg(bytes)) {
-		return false;
+		return 0;
 	}
 	auto position = 2;
 	const auto size = int(bytes.size());
 	while (position + 3 < size) {
 		if (uchar(bytes[position]) != 0xFF) {
-			return false;
+			return 0;
 		}
 		auto markerAt = position + 1;
 		auto marker = uchar(bytes[markerAt]);
@@ -223,31 +227,121 @@ bool JpegNeedsRotation(const QByteArray &bytes) {
 			marker = uchar(bytes[markerAt]);
 		}
 		if (marker == 0xDA || marker == 0xD9) {
-			return false;
+			return 0;
 		} else if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
 			position = markerAt + 1;
 			continue;
 		}
 		if (markerAt + 2 >= size) {
-			return false;
+			return 0;
 		}
 		const auto length = (int(uchar(bytes[markerAt + 1])) << 8)
 			| int(uchar(bytes[markerAt + 2]));
 		if (length < 2 || markerAt + 1 + length > size) {
-			return false;
+			return 0;
 		}
 		if (marker == 0xE1) {
 			const auto orientation = JpegOrientation(
 				bytes.constData() + markerAt + 3,
 				length - 2);
-			// 1 is "as it lies", 0 is "not said at all".
 			if (orientation > 1) {
-				return true;
+				return orientation;
 			}
 		}
 		position = markerAt + 1 + length;
 	}
-	return false;
+	return 0;
+}
+
+// Everything StripJpeg does, and then one Exif block put back holding a single
+// value: the orientation. Nothing else survives - no GPS, no time, no camera
+// model or serial number, no maker note, no thumbnail.
+//
+// This exists because the two things the scrub wants were in conflict for one
+// kind of file. The orientation lives inside the Exif block, so stripping the
+// block sends a portrait photo lying on its side; the archive writer therefore
+// used to give up on such a file and send it whole, GPS and all. Re-encoding
+// the pixels the right way up, the way the single-photo path does, is not an
+// option here: a folder is sent as documents, and the documentation promises
+// that a document's container is taken apart rather than re-encoded.
+//
+// The block written back is the smallest one that is still a valid Exif block:
+// the "Exif\0\0" introducer, a big-endian TIFF header pointing at the first
+// directory, and that directory holding exactly one entry - tag 0x0112, type
+// SHORT, one value - with no directory after it.
+[[nodiscard]] QByteArray StripJpegKeepOrientation(
+		const QByteArray &bytes,
+		int orientation) {
+	const auto stripped = StripJpeg(bytes);
+	if (stripped.size() == bytes.size()) {
+		// StripJpeg hands the original back when the file is not what it
+		// claims to be. Nothing was removed, so there is nothing to put back.
+		return bytes;
+	}
+	const auto value = (orientation >= 1 && orientation <= 8)
+		? orientation
+		: 1;
+	auto exif = QByteArray();
+	exif.reserve(36); // The two marker bytes, then the 34 the length counts.
+	const auto byte = [&](int v) { exif.append(char(uchar(v))); };
+	byte(0xFF);
+	byte(0xE1);
+	byte(0x00);
+	byte(0x22); // Length: 34, counting these two bytes.
+	exif.append("Exif\0\0", 6);
+	exif.append("MM\0*", 4); // Big endian, and the 42 that says so twice.
+	byte(0x00);
+	byte(0x00);
+	byte(0x00);
+	byte(0x08); // The first directory starts right after this header.
+	byte(0x00);
+	byte(0x01); // One entry in it.
+	byte(0x01);
+	byte(0x12); // Tag: orientation.
+	byte(0x00);
+	byte(0x03); // Type: SHORT.
+	byte(0x00);
+	byte(0x00);
+	byte(0x00);
+	byte(0x01); // One of them.
+	byte(0x00);
+	byte(value); // The value itself, left-aligned in its four bytes...
+	byte(0x00);
+	byte(0x00); // ...and padded, as a SHORT in a 4-byte slot must be.
+	byte(0x00);
+	byte(0x00);
+	byte(0x00);
+	byte(0x00); // No directory after this one.
+
+	// After the JFIF block when there is one, not merely after the marker that
+	// opens the file. Both orders are read by everything tried, but JFIF is
+	// specified to come first, and this file is going to somebody else's
+	// viewer, not back into this client.
+	auto at = 2; // Past SOI.
+	if ((stripped.size() > 5)
+		&& (uchar(stripped[2]) == 0xFF)
+		&& (uchar(stripped[3]) == 0xE0)) {
+		const auto length = (int(uchar(stripped[4])) << 8)
+			| int(uchar(stripped[5]));
+		// The segment is the two marker bytes plus `length`, which counts
+		// itself, so it ends here - and that has to be inside the file.
+		if ((length >= 2) && (4 + length <= stripped.size())) {
+			at = 4 + length;
+		}
+	}
+	auto result = QByteArray();
+	result.reserve(stripped.size() + exif.size());
+	result.append(stripped.constData(), at);
+	result.append(exif);
+	result.append(stripped.constData() + at, stripped.size() - at);
+	return result;
+}
+
+} // namespace
+
+bool JpegNeedsRotation(const QByteArray &bytes) {
+	// 1 is "as it lies", 0 is "not said at all".
+	return JpegRotation(bytes) > 1;
 }
 
 bool StripMetadataEnabled() {
@@ -317,13 +411,23 @@ QByteArray StripArchiveEntry(
 		return QByteArray();
 	}
 	const auto bytes = file.read(kMaxArchiveEntryBytes + 1);
-	if (bytes.isEmpty()
-		|| (bytes.size() > kMaxArchiveEntryBytes)
-		|| JpegNeedsRotation(bytes)) {
+	if (bytes.isEmpty() || (bytes.size() > kMaxArchiveEntryBytes)) {
 		return QByteArray();
 	}
-	auto cleaned = StripImageMetadata(bytes);
-	return (cleaned.size() != bytes.size()) ? cleaned : QByteArray();
+	// A JPEG that asks to be turned used to leave here uncleaned, because
+	// stripping takes the request away with everything else. Giving up on the
+	// file meant a photo straight off a phone travelled to the other side with
+	// its GPS fix, its timestamp and the camera's serial number - on the most
+	// ordinary action there is, dropping a folder into a chat. Now the request
+	// is the one thing written back.
+	const auto rotation = JpegRotation(bytes);
+	auto cleaned = rotation
+		? StripJpegKeepOrientation(bytes, rotation)
+		: StripImageMetadata(bytes);
+	// Compared by content, not by length: the block written back is 34 bytes,
+	// and a file that happened to lose exactly that much would otherwise read
+	// as "nothing was removed" and be sent as it came.
+	return (cleaned != bytes) ? cleaned : QByteArray();
 }
 
 } // namespace NovaGram

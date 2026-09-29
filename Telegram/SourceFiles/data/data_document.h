@@ -83,6 +83,16 @@ struct StickerData : public DocumentAdditionalData {
 	StickerSetIdentifier set;
 	StickerType type = StickerType::Webp;
 	Data::StickersType setType = Data::StickersType();
+
+	// NovaGram: the set reference named one of the sets the server defines for
+	// itself - a dice, the animated emoji, gift animations, the default topic
+	// icons or statuses - rather than a set a person can pick a sticker out of.
+	// `set` cannot answer this: UpdateStickerSetIdentifier keeps an identifier
+	// only for inputStickerSetID and flattens every other shape, service sets
+	// and inputStickerSetEmpty alike, to the same empty value. The crash
+	// sticker guard used to read that empty value as "the server supplied it"
+	// and stand aside - which a sender only had to name an empty set to get.
+	bool serviceSet = false;
 };
 
 struct SongData : public DocumentAdditionalData {

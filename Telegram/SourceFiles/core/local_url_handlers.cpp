@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/update_checker.h"
 #include "core/application.h"
 #include "novagram/nova_pin.h" // NovaGram::UseRussianTexts.
+#include "novagram/nova_decoy.h"
 #include "novagram/nova_peer_id.h"
 #include "core/click_handler_types.h"
 #include "dialogs/ui/dialogs_suggestions.h"
@@ -451,21 +452,52 @@ bool ApplyWebProxy(
 	// NovaGram: a WEB proxy is not a route, it is code. Connecting through one
 	// loads a page from the provider inside the client and relays every MTProto
 	// frame through that page's JavaScript, so a tapped link - in a chat
-	// message, in a channel, from any sender - must not be able to offer it.
-	// The other proxy types keep upstream's confirmation box: they only move
-	// packets. Manual entry in the connection settings is left working.
-	auto box = Ui::MakeInformBox(NovaGram::UseRussianTexts()
-		? u"NovaGram не устанавливает WEB-прокси по ссылке: прокси этого типа "
-			u"запускает внутри клиента веб-страницу поставщика. Если вы ему "
-			u"доверяете, добавьте прокси вручную в настройках соединения."_q
-		: u"NovaGram does not install a WEB proxy from a link: this type runs "
-			u"the provider's web page inside the client. If you trust the "
-			u"provider, add the proxy by hand in the connection settings."_q);
-	if (controller) {
-		controller->show(std::move(box));
-		controller->window().activate();
+	// message, in a channel, from any sender - says so before upstream's
+	// confirmation box is shown; that box is only reached by choosing to go on
+	// (D17, amended by the owner). The other proxy types keep the box as it is:
+	// they only move packets. The decoy gets upstream's box straight away,
+	// because this text names NovaGram (I4); the transport refuses to start
+	// there anyway.
+	const auto params = url_parse_params(
+		match->captured(1),
+		qthelp::UrlParamNameTransform::ToLower);
+	const auto apply = [=] {
+		ProxiesBoxController::ShowApplyConfirmation(
+			controller,
+			MTP::ProxyData::Type::Web,
+			params);
+	};
+	if (NovaGram::Decoy::Active()) {
+		apply();
 	} else {
-		Ui::show(std::move(box));
+		const auto russian = NovaGram::UseRussianTexts();
+		auto box = Ui::MakeConfirmBox({
+			.text = (russian
+				? u"Ссылка добавляет WEB-прокси. Прокси этого типа запускает "
+					u"внутри клиента веб-страницу поставщика и пропускает через "
+					u"её JavaScript весь трафик Telegram. Защита DNS в NovaGram "
+					u"на него не распространяется. Добавляйте его, только если "
+					u"доверяете поставщику."_q
+				: u"This link adds a WEB proxy. A proxy of this type runs the "
+					u"provider's web page inside the client and passes all "
+					u"Telegram traffic through its JavaScript. NovaGram's DNS "
+					u"protection does not cover it. Add it only if you trust "
+					u"the provider."_q),
+			.confirmed = [=](Fn<void()> close) {
+				close();
+				apply();
+			},
+			.confirmText = (russian ? u"Продолжить"_q : u"Continue"_q),
+			.title = (russian ? u"WEB-прокси"_q : u"WEB proxy"_q),
+		});
+		if (controller) {
+			controller->show(std::move(box));
+		} else {
+			Ui::show(std::move(box));
+		}
+	}
+	if (controller) {
+		controller->window().activate();
 	}
 	return true;
 }

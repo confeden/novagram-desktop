@@ -881,6 +881,47 @@ void RunEmergencyWipe(const QString &pin) {
 	SyncDeauth::Broadcast([identity] { RunWipe(identity); });
 }
 
+PasscodeGate GatePasscodeEntry(
+		const QString &entered,
+		Fn<void()> beforeWipe) {
+	if (entered.isEmpty() || !PinModeEnabled()) {
+		return PasscodeGate::Proceed;
+	}
+	// The emergency pin is checked before the lockout gate on purpose: under
+	// coercion the wrong pins have already been burned, so a check placed after
+	// the lockout would be unavailable in exactly the one situation the pin
+	// exists for. Matching it neither touches the failure counter nor clears
+	// it, so an attacker guessing at it gains nothing either way.
+	if (CheckEmergencyPin(entered)) {
+		// Before, never after: RunEmergencyWipe may destroy the screen that
+		// called this, and with synchronous deauthorization it may instead
+		// return while the line warning the other clients is still in flight -
+		// so the screen stays up with the pin still in it unless it is cleared
+		// here.
+		if (beforeWipe) {
+			beforeWipe();
+		}
+		RunEmergencyWipe(entered);
+		return PasscodeGate::EmergencyWipeStarted;
+	}
+	if (LockoutRemaining() > 0) {
+		return PasscodeGate::LockedOut;
+	}
+	return PasscodeGate::Proceed;
+}
+
+void NotePasscodeChecked(bool correct) {
+	if (!PinModeEnabled()) {
+		return;
+	} else if (correct) {
+		ResetFailedAttempts();
+	} else {
+		// Upstream counted the bad try in its own in-memory counter already;
+		// this is the fork's, which outlives a restart.
+		RecordFailedAttempt();
+	}
+}
+
 void RunSyncedWipe() {
 	if (WipeStarted()) {
 		return;

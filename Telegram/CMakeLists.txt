@@ -1670,6 +1670,7 @@ PRIVATE
     novagram/nova_erase.h
     novagram/nova_filenames.cpp
     novagram/nova_filenames.h
+    novagram/nova_fonts.h
     novagram/nova_device_lock.cpp
     novagram/nova_device_lock.h
     novagram/nova_muted_members.cpp

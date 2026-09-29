@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/history.h"
 #include "novagram/nova_drop_incoming.h"
+#include "novagram/nova_read_status.h"
 
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
@@ -3478,6 +3479,11 @@ void History::applyDialog(
 		data.vread_inbox_max_id().v,
 		data.vread_outbox_max_id().v);
 	applyDialogTopMessage(data.vtop_message().v);
+	// NovaGram: the read markers above are the server's, and in a dialog whose
+	// read status is withheld the server is never told what was read here - so
+	// every start, and every refresh of this entry, brought the dialog back as
+	// unread. The position the rule wrote down goes back on top.
+	NovaGram::ApplyHeldRead(this, data.vtop_message().v);
 	setUnreadMark(data.is_unread_mark());
 	unreadMentions().setCount(data.vunread_mentions_count().v);
 	unreadReactions().setCount(data.vunread_reactions_count().v);

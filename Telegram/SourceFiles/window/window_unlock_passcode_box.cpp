@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "lang/lang_keys.h"
 #include "lottie/lottie_icon.h"
+#include "novagram/nova_pin.h"
 #include "settings/cloud_password/settings_cloud_password_common.h"
 #include "settings/settings_common.h"
 #include "ui/layers/generic_box.h"
@@ -23,6 +24,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "styles/style_window_lock_widgets.h"
+
+#include <QtWidgets/QLineEdit>
 
 namespace Window {
 namespace {
@@ -51,7 +54,27 @@ void Submit(
 		error->setText(text);
 		error->show();
 	};
-	switch (TryPasscode(field->text())) {
+	// NovaGram: this box accepts a passcode while the application is locked, so
+	// it answers to the fork's pin the same way the lock screen does. Without
+	// this it went straight to upstream's check: the emergency pin only
+	// reported a wrong passcode, the fork's lockout was neither consulted nor
+	// advanced, and a correct entry here left it armed against the next screen.
+	const auto entered = field->text();
+	const auto clearField = [=] { field->setText(QString()); };
+	switch (NovaGram::GatePasscodeEntry(entered, clearField)) {
+	case NovaGram::PasscodeGate::EmergencyWipeStarted:
+		// The field was cleared inside, before anything was destroyed. This box
+		// may already be gone, so nothing of it may be touched here.
+		return;
+	case NovaGram::PasscodeGate::LockedOut:
+		field->setText(QString());
+		field->showError();
+		fail(NovaGram::LockoutMessage(NovaGram::LockoutRemaining()));
+		return;
+	case NovaGram::PasscodeGate::Proceed:
+		break;
+	}
+	switch (TryPasscode(entered)) {
 	case PasscodeAttempt::Empty:
 		field->showError();
 		return;
@@ -60,13 +83,24 @@ void Submit(
 		fail(tr::lng_flood_error(tr::now));
 		return;
 	case PasscodeAttempt::Wrong:
-		field->selectAll();
+		NovaGram::NotePasscodeChecked(false);
+		// In pin mode a wrong value is cleared rather than left selected: the
+		// lock screen does the same, because its keypad appends instead of
+		// replacing, and the two screens must not disagree about the pin.
+		if (NovaGram::PinModeEnabled()) {
+			field->setText(QString());
+		} else {
+			field->selectAll();
+		}
 		field->showError();
-		fail(tr::lng_passcode_wrong(tr::now));
+		fail(NovaGram::PinModeEnabled()
+			? NovaGram::WrongPin()
+			: tr::lng_passcode_wrong(tr::now));
 		return;
 	case PasscodeAttempt::Correct:
 		break;
 	}
+	NovaGram::NotePasscodeChecked(true);
 	const auto weak = base::make_weak(box);
 	Core::App().unlockPasscode();
 	if (weak) {
@@ -127,6 +161,14 @@ void UnlockPasscodeBox(
 		tr::lng_passcode_enter(),
 		QString(),
 		*st.field);
+	if (NovaGram::PinModeEnabled()) {
+		// NovaGram: the same field as the lock screen's, for the same reason -
+		// the dot echo counts out the digits of the pin to anyone watching, and
+		// the fork promises that the entry shows nothing at all.
+		field->setEchoMode(QLineEdit::NoEcho);
+		field->setMaxLength(NovaGram::kMaxPinLength);
+		field->setPlaceholder(rpl::single(NovaGram::PinPlaceholder()));
+	}
 	const auto error = Settings::CloudPassword::AddError(
 		content,
 		field,

@@ -907,7 +907,21 @@ void StartReadStatus(not_null<Main::Session*> session) {
 	session->lifetime().add([raw = session.get()] {
 		Map().remove(raw);
 	});
-	Find(session)->start();
+	const auto watcher = Find(session);
+	watcher->start();
+
+	// The chat list can arrive before the watcher exists, and then
+	// applyDialog found nothing held for the dialogs it brought.
+	// A copy: updating a counter notifies the chat list, and nothing should be
+	// able to change the map under the loop.
+	const auto owner = &session->data();
+	const auto held = watcher->state().heldReadTill;
+	for (const auto &[peerId, till] : held) {
+		if (const auto history = owner->historyLoaded(peerId)) {
+			const auto last = history->lastServerMessage();
+			ApplyHeldRead(history, last ? last->id : MsgId(0));
+		}
+	}
 }
 
 bool ReadStatusHiddenFor(not_null<PeerData*> peer) {
@@ -958,6 +972,51 @@ MsgId HeldReadTill(not_null<History*> history) {
 		return watcher->heldReadTill(peer->id);
 	}
 	return MsgId(0);
+}
+
+void ApplyHeldRead(not_null<History*> history, MsgId topMessageId) {
+	const auto till = HeldReadTill(history);
+	if (!IsServerMsgId(till)
+		|| !history->folderKnown()
+		|| (history->inboxReadTillKnown()
+			&& history->inboxReadTillId() >= till)) {
+		// Nothing held, the entry is not loaded yet - applyDialog comes back
+		// here when it is - or the local position is already as far.
+		return;
+	}
+	// Only while the rule still holds. Switching the feature off keeps the
+	// held position (only reveal() and forget() drop it), and a local position
+	// moved up to it would make the next read of that dialog look already done
+	// to readInboxTillNeedsRequest - so the receipt the switch lets through again
+	// would never be sent. Find(), not Get(): HeldReadTill already found it, and
+	// the rule is read as it stands, without resolveAssumed() asking the server.
+	const auto peer = history->peer;
+	const auto watcher = Find(&peer->session());
+	const auto &state = watcher->state();
+	const auto rule = state.rules.find(peer->id);
+	if (!state.enabled
+		|| rule == end(state.rules)
+		|| rule->second != Rule::Hidden) {
+		return;
+	}
+	// The same order Histories::readInboxTill uses, and for the same reason it
+	// leaves the position alone when it cannot count: a position moved past
+	// messages whose count was not corrected would keep that count forever,
+	// since every later call would find the position already there.
+	if (topMessageId && topMessageId <= till) {
+		history->setInboxReadTill(till);
+		history->setUnreadCount(0);
+	} else if (const auto still = history->countStillUnreadLocal(till)) {
+		// Counted before the position moves: it is measured from the old one.
+		history->setInboxReadTill(till);
+		history->setUnreadCount(*still);
+	} else {
+		// Newer messages exist and are not loaded here. The server's count
+		// stays - too high, but the dialog does have unread messages - until
+		// the dialog is opened and the gate calls this with them loaded.
+		return;
+	}
+	history->updateChatListEntry();
 }
 
 void ForgetReadStatusRule(not_null<PeerData*> peer) {
@@ -1078,8 +1137,8 @@ void ReadStatusBox(
 					"другого: ответ и так говорит собеседнику, "
 					"что вы прочитали.\n\nПобочный эффект: для "
 					"Telegram сообщения остаются непрочитанными, поэтому "
-					"счётчик непрочитанного в этом диалоге может возвращаться "
-					"после перезапуска и на других устройствах."_q
+					"на других ваших устройствах этот диалог выглядит "
+					"непрочитанным."_q
 				: u"You did not start this dialog, so NovaGram does not tell "
 					"the other side that you read their messages: the read "
 					"marks never appear for them, and the viewer list of "
@@ -1087,9 +1146,8 @@ void ReadStatusBox(
 					"soon as you send anything here, from this device or from "
 					"another one: an answer tells the other side that you read "
 					"it anyway.\n\nSide effect: for Telegram "
-					"the messages stay unread, so the unread counter in this "
-					"dialog can come back after a restart and on other "
-					"devices."_q)
+					"the messages stay unread, so on your other devices this "
+					"dialog looks unread."_q)
 			: (russian
 				? u"В этом диалоге статус прочтения не скрывается."_q
 				: u"The read status is not hidden in this dialog."_q)),

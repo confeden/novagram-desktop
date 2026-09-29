@@ -90,6 +90,36 @@ void UpdateStickerSetIdentifier(
 	});
 }
 
+// NovaGram: whether the reference names a set the server defines for itself.
+// Kept apart from the identifier above because that one cannot carry it: every
+// shape but inputStickerSetID flattens to the same empty identifier, so a dice
+// and a sender-chosen inputStickerSetEmpty look alike there. Listed by name
+// rather than by "not an id", so a shape upstream adds later is treated as
+// sender-chosen - the safe side for a guard - until it is looked at.
+[[nodiscard]] bool IsServiceStickerSet(const MTPInputStickerSet &from) {
+	return from.match([](const MTPDinputStickerSetDice &) {
+		return true;
+	}, [](const MTPDinputStickerSetAnimatedEmoji &) {
+		return true;
+	}, [](const MTPDinputStickerSetAnimatedEmojiAnimations &) {
+		return true;
+	}, [](const MTPDinputStickerSetEmojiGenericAnimations &) {
+		return true;
+	}, [](const MTPDinputStickerSetEmojiDefaultStatuses &) {
+		return true;
+	}, [](const MTPDinputStickerSetEmojiChannelDefaultStatuses &) {
+		return true;
+	}, [](const MTPDinputStickerSetEmojiDefaultTopicIcons &) {
+		return true;
+	}, [](const MTPDinputStickerSetPremiumGifts &) {
+		return true;
+	}, [](const MTPDinputStickerSetTonGifts &) {
+		return true;
+	}, [](const auto &) {
+		return false;
+	});
+}
+
 [[nodiscard]] crl::time MillisecondsFromSeconds(float64 seconds) {
 	constexpr auto limit = float64(std::numeric_limits<crl::time>::max());
 	const auto milliseconds = seconds * 1000.;
@@ -396,6 +426,8 @@ void DocumentData::setattributes(
 				}
 				info->alt = qs(data.valt());
 				UpdateStickerSetIdentifier(info->set, data.vstickerset());
+				// NovaGram: see StickerData::serviceSet.
+				info->serviceSet = IsServiceStickerSet(data.vstickerset());
 			}
 		}, [&](const MTPDdocumentAttributeCustomEmoji &data) {
 			const auto was = type;

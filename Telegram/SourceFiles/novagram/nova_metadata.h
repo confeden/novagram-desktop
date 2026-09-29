@@ -49,8 +49,13 @@ void SetStripMetadataEnabled(bool enabled);
 //
 // Answers empty - meaning "send the file as it is" - when the setting is off,
 // when the entry is not a JPEG or a PNG, when it is too big to hold in memory,
-// when the JPEG says it has to be rotated first (stripping would cut off the
-// note that says so and send it sideways), or when nothing was removed.
+// or when nothing was removed.
+//
+// A JPEG that says it has to be turned is cleaned like any other and the
+// request to turn it is written back on its own, in an Exif block holding that
+// one value and nothing else. It used to be the fourth reason for answering
+// empty, and that was a hole: the photos most likely to carry a GPS fix are
+// exactly the ones a phone marks for rotation.
 [[nodiscard]] QByteArray StripArchiveEntry(
 	const QString &path,
 	const QString &name,

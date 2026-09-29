@@ -277,11 +277,15 @@ void Histories::readInboxTill(
 
 	if (NovaGram::ReadStatusHidden(history)) {
 		// Returning here still runs syncGuard above, so the dialog looks read
-		// locally while nothing about it reaches the server. That local
-		// position survives nowhere else - the next start takes it from the
-		// server - so it is written down next to the rule and sent when the
-		// rule is lifted.
+		// locally while nothing about it reaches the server. The server's
+		// markers would take that position back - at the next start, or at any
+		// refresh of the dialog entry - so it is written down next to the rule,
+		// put back after every such refresh (History::applyDialog), and sent
+		// when the rule is lifted. Moving the local position now, and not
+		// only zeroing the counter when the last message was reached, keeps a
+		// refresh later in this session from taking it back as well.
 		NovaGram::NoteHeldRead(history, tillId);
+		NovaGram::ApplyHeldRead(history);
 		DEBUG_LOG(("Reading: hidden by NovaGram."));
 		return;
 	}
