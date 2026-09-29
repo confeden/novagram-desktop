@@ -325,6 +325,17 @@ private:
 	void checkReportFinished(PeerId peerId);
 	void showPendingReports();
 
+	// Every step of the queue wrote the whole state to disk. That is right for
+	// one message at a time and wrong for a batch: one deletion request
+	// carries up to a hundred entries, and its answer used to serialise the
+	// queue - which Erase evidence can leave thousands long - once per entry,
+	// on the main thread. The batch handlers hold the writes across their loop
+	// and let exactly one go at the end. Nothing is risked by holding: the
+	// requests have already been sent, and the worst a state file one loop
+	// behind can cost is a repeated delete of a message that is already gone.
+	void saveState();
+	[[nodiscard]] auto holdSaves();
+
 	const not_null<Main::Session*> _session;
 	State _state;
 	base::Timer _timer;
@@ -337,8 +348,28 @@ private:
 	// takes longer than most.
 	TimeId _floodUntilReplace = 0;
 	TimeId _floodUntilDelete = 0;
+	int _savesHeld = 0;
+	bool _saveWanted = false;
 
 };
+
+void Runner::saveState() {
+	if (_savesHeld > 0) {
+		_saveWanted = true;
+		return;
+	}
+	WriteState(_session, _state);
+}
+
+auto Runner::holdSaves() {
+	++_savesHeld;
+	return gsl::finally([this] {
+		if ((--_savesHeld <= 0) && _saveWanted) {
+			_saveWanted = false;
+			WriteState(_session, _state);
+		}
+	});
+}
 
 Runner::Runner(not_null<Main::Session*> session)
 : _session(session)
@@ -514,7 +545,7 @@ void Runner::checkReportFinished(PeerId peerId) {
 		return;
 	}
 	i->finished = true;
-	WriteState(_session, _state);
+	saveState();
 	showPendingReports();
 }
 
@@ -610,11 +641,14 @@ void Runner::tick() {
 			++handled;
 		}
 	}
-	for (auto &[peerId, entries] : batches) {
-		eraseBatch(peerId, std::move(entries));
-	}
-	for (const auto &entry : due) {
-		process(entry);
+	{
+		const auto held = holdSaves();
+		for (auto &[peerId, entries] : batches) {
+			eraseBatch(peerId, std::move(entries));
+		}
+		for (const auto &entry : due) {
+			process(entry);
+		}
 	}
 	schedule();
 }
@@ -836,6 +870,7 @@ bool Runner::readyToDelete(const Entry &entry) const {
 void Runner::eraseBatch(PeerId peerId, std::vector<Entry> entries) {
 	const auto peer = _session->data().peerLoaded(peerId);
 	if (!peer || entries.empty()) {
+		const auto held = holdSaves();
 		for (const auto &entry : entries) {
 			advance(entry, entry.stage, base::unixtime::now() + kRetryDelay);
 		}
@@ -860,6 +895,7 @@ void Runner::eraseBatch(PeerId peerId, std::vector<Entry> entries) {
 				api->applyAffectedMessages(history->peer, result);
 				finish();
 				if (const auto strong = weak.get()) {
+					const auto held = strong->holdSaves();
 					for (const auto &entry : entries) {
 						strong->_busy.remove(
 							FullMsgId(entry.peerId, entry.msgId));
@@ -873,6 +909,7 @@ void Runner::eraseBatch(PeerId peerId, std::vector<Entry> entries) {
 					// Whatever the failure was, it is the same for all hundred:
 					// a flood wait, a chat that refuses, a broken answer. Each
 					// entry takes it as if it had been sent on its own.
+					const auto held = strong->holdSaves();
 					for (const auto &entry : entries) {
 						strong->_busy.remove(
 							FullMsgId(entry.peerId, entry.msgId));
@@ -940,7 +977,7 @@ void Runner::advance(const Entry &entry, Stage stage, TimeId dueAt) {
 	}
 	i->stage = stage;
 	i->dueAt = dueAt;
-	WriteState(_session, _state);
+	saveState();
 	schedule();
 }
 
@@ -954,7 +991,7 @@ void Runner::drop(const Entry &entry) {
 	const auto wasErase = i->erase;
 	const auto peerId = entry.peerId;
 	_state.queue.erase(i);
-	WriteState(_session, _state);
+	saveState();
 	if (wasErase) {
 		checkReportFinished(peerId);
 	}
