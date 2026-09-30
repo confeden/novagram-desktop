@@ -85,6 +85,26 @@ constexpr uint64 kServiceIds[] = {
 	return nullptr;
 }
 
+[[nodiscard]] bool OnlyBarePhone(
+		const EntitiesInText &entities,
+		int from,
+		int till) {
+	auto found = false;
+	for (const auto &entity : entities) {
+		const auto start = entity.offset();
+		const auto end = start + entity.length();
+		if (!(from < end && start < till)) {
+			continue;
+		} else if (entity.type() != EntityType::Phone
+			|| start != from
+			|| end != till) {
+			return false;
+		}
+		found = true;
+	}
+	return found;
+}
+
 [[nodiscard]] bool InsideEntity(
 		const EntitiesInText &entities,
 		int from,
@@ -167,7 +187,8 @@ void Linkify(TextWithEntities &text, not_null<Main::Session*> session) {
 			|| (i < length && glued(text.text.at(i)))) {
 			continue;
 		}
-		if (InsideEntity(text.entities, from, i)) {
+		const auto barePhone = OnlyBarePhone(text.entities, from, i);
+		if (!barePhone && InsideEntity(text.entities, from, i)) {
 			continue;
 		}
 		const auto bare = text.text.mid(from, count).toULongLong();
@@ -175,6 +196,16 @@ void Linkify(TextWithEntities &text, not_null<Main::Session*> session) {
 			// The rule the whole feature rests on: no link where nothing can
 			// be opened. A dead link on a price would be worse than no link.
 			continue;
+		}
+		if (barePhone) {
+			// The server marks any bare run of ten digits as a phone number,
+			// and a user id has ten digits now: left alone, every id this
+			// client can open would offer a phone call instead. A number
+			// that names a peer the client knows is taken as that peer.
+			text.entities.erase(ranges::remove_if(text.entities, [&](
+					const EntityInText &entity) {
+				return entity.offset() == from && entity.length() == count;
+			}), text.entities.end());
 		}
 		added.push_back(EntityInText(
 			EntityType::CustomUrl,
