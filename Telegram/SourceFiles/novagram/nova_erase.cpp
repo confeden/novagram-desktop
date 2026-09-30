@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_item_components.h"
 #include "history/view/history_view_element.h"
 #include "main/main_session.h"
 #include "novagram/nova_autodelete.h"
@@ -102,6 +103,29 @@ void Collector::requestPage() {
 	}).send();
 }
 
+// Whether this message is the user's own. Not simply out(): tdesktop does not
+// set the Outgoing flag for the self peer at all - `NewMessageFlags` reads
+// `peer->isSelf() ? MessageFlag() : MessageFlag::Outgoing` - so in Saved
+// Messages every message answers out() == false. Asking only that made Erase
+// evidence walk the whole of Saved Messages, find nothing, and say "no
+// messages of yours for this period" over what is usually the most private
+// chat on the account. In the self chat ownership is decided the way upstream
+// decides it on screen: everything is the user's own except a forward that
+// came from somebody else.
+[[nodiscard]] bool IsOwnMessage(not_null<HistoryItem*> item) {
+	if (!item->history()->peer->isSelf()) {
+		return item->out();
+	}
+	const auto forwarded = item->Get<HistoryMessageForwarded>();
+	if (!forwarded) {
+		return true;
+	} else if (!forwarded->forwardOfForward()) {
+		return forwarded->originalSender && forwarded->originalSender->isSelf();
+	}
+	return (forwarded->savedFromSender && forwarded->savedFromSender->isSelf())
+		|| forwarded->savedFromOutgoing;
+}
+
 bool Collector::consume(const QVector<MTPMessage> &list) {
 	if (list.isEmpty()) {
 		return false;
@@ -124,7 +148,7 @@ bool Collector::consume(const QVector<MTPMessage> &list) {
 		} else if (_since && item->date() < _since) {
 			reachedEnd = true;
 			break;
-		} else if (item->out() && !item->isService()) {
+		} else if (IsOwnMessage(item) && !item->isService()) {
 			_found.push_back(item->fullId());
 		}
 	}
