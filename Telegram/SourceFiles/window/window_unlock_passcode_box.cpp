@@ -50,7 +50,7 @@ void Submit(
 		not_null<Ui::PasswordInput*> field,
 		not_null<Ui::FlatLabel*> error,
 		Fn<void()> finish) {
-	const auto fail = [&](const QString &text) {
+	const auto fail = [=](const QString &text) {
 		error->setText(text);
 		error->show();
 	};
@@ -74,15 +74,20 @@ void Submit(
 	case NovaGram::PasscodeGate::Proceed:
 		break;
 	}
-	switch (TryPasscode(entered)) {
-	case PasscodeAttempt::Empty:
-		field->showError();
-		return;
-	case PasscodeAttempt::Flood:
-		field->showError();
-		fail(tr::lng_flood_error(tr::now));
-		return;
-	case PasscodeAttempt::Wrong:
+
+	// The verdict arrives later, on the main thread; the fork's lockout counter
+	// is noted only there, once upstream has actually checked the passcode.
+	auto done = crl::guard(box, [=](bool correct) {
+		field->setDisabled(false);
+		if (correct) {
+			NovaGram::NotePasscodeChecked(true);
+			const auto weak = base::make_weak(box);
+			Core::App().unlockPasscode();
+			if (weak) {
+				finish();
+			}
+			return;
+		}
 		NovaGram::NotePasscodeChecked(false);
 		// In pin mode a wrong value is cleared rather than left selected: the
 		// lock screen does the same, because its keypad appends instead of
@@ -90,21 +95,27 @@ void Submit(
 		if (NovaGram::PinModeEnabled()) {
 			field->setText(QString());
 		} else {
+			field->setFocus();
 			field->selectAll();
 		}
 		field->showError();
 		fail(NovaGram::PinModeEnabled()
 			? NovaGram::WrongPin()
 			: tr::lng_passcode_wrong(tr::now));
+	});
+	switch (TryPasscode(entered, std::move(done))) {
+	case PasscodeAttempt::Empty:
+		field->showError();
 		return;
-	case PasscodeAttempt::Correct:
-		break;
-	}
-	NovaGram::NotePasscodeChecked(true);
-	const auto weak = base::make_weak(box);
-	Core::App().unlockPasscode();
-	if (weak) {
-		finish();
+	case PasscodeAttempt::Flood:
+		field->showError();
+		fail(tr::lng_flood_error(tr::now));
+		return;
+	case PasscodeAttempt::Busy:
+		return;
+	case PasscodeAttempt::Started:
+		field->setDisabled(true);
+		return;
 	}
 }
 
