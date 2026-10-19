@@ -23,6 +23,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_metadata.h"
 #include "novagram/nova_update.h"
 #include "novagram/nova_night_silent.h"
+#include "novagram/nova_terminator.h"
+#include "novagram/nova_wss.h"
 #include "novagram/nova_notify_previews.h"
 #include "novagram/nova_pin.h"
 #include "novagram/nova_pin_policy.h"
@@ -30,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_read_status.h"
 #include "novagram/nova_screen_guard.h"
 #include "novagram/nova_crash_stickers.h"
+#include "novagram/nova_forbidden.h"
 #include "novagram/nova_stories.h"
 #include "novagram/nova_sync_deauth.h"
 #include "settings/settings_common_session.h"
@@ -645,6 +648,28 @@ void FillDoh(
 
 	Ui::AddSkip(container);
 	AddAbout(container, DohAbout());
+
+	Ui::AddSkip(container);
+	AddToggle(
+		container,
+		Wss::Title(),
+		Wss::Enabled(),
+		[](bool toggled) { Wss::SetEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	AddAbout(container, Wss::About());
+
+	if (Terminator::Available()) {
+		Ui::AddSkip(container);
+		AddToggle(
+			container,
+			Terminator::Title(),
+			Terminator::Enabled(),
+			[](bool toggled) { Terminator::SetEnabled(toggled); });
+
+		Ui::AddSkip(container);
+		AddAbout(container, Terminator::About());
+	}
 }
 
 void FillCalls(not_null<Ui::VerticalLayout*> container) {
@@ -981,6 +1006,26 @@ void FillStories(not_null<Ui::VerticalLayout*> container) {
 	AddAbout(container, StoriesHiddenAbout());
 }
 
+void FillForbidden(not_null<Ui::VerticalLayout*> container) {
+	const auto russian = UseRussianTexts();
+
+	Ui::AddSkip(container);
+	Ui::AddSubsectionTitle(
+		container,
+		rpl::single(russian
+			? u"Запрещённый контент"_q
+			: u"Prohibited content"_q));
+
+	AddToggle(
+		container,
+		Forbidden::Title(),
+		Forbidden::Enabled(),
+		[](bool toggled) { Forbidden::SetEnabled(toggled); });
+
+	Ui::AddSkip(container);
+	AddAbout(container, Forbidden::About());
+}
+
 [[nodiscard]] QString NotifyPreviewsAbout() {
 	return UseRussianTexts()
 		? u"Текст сообщения в push кладёт сервер Telegram, а не клиент. "
@@ -1303,6 +1348,9 @@ void NovaGramSection::setupContent() {
 		FillSending(container);
 		FillStickers(container);
 		FillStories(container);
+		if (!Decoy::Active()) {
+			FillForbidden(container);
+		}
 		FillIcon(container);
 		if (!Decoy::Active()) {
 			// The decoy never checks for updates and must not offer a row

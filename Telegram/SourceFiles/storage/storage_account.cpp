@@ -4050,6 +4050,7 @@ void Account::writePrefImpl<QByteArray>(
 	writePrefGeneric(key, value);
 }
 
+template <>
 std::optional<QString> Account::readPrefImpl<QString>(
 		std::string_view key) {
 	if (const auto data = readPrefGeneric(key)) {

@@ -42,6 +42,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/mime_type.h"
 #include "chat_helpers/tabbed_selector.h"
 #include "main/main_session.h"
+#include "novagram/nova_forbidden.h"
 #include "mainwindow.h"
 #include "data/components/recent_inline_bots.h"
 #include "data/components/scheduled_messages.h"
@@ -769,6 +770,17 @@ void ScheduledWidget::send() {
 }
 
 void ScheduledWidget::send(Api::SendOptions options) {
+	// NovaGram: a link to a listed resource warns once, at send time only.
+	if (NovaGram::Forbidden::ConfirmSend(
+			controller()->uiShow(),
+			_history->peer,
+			_composeControls->getTextWithAppliedMarkdown().text,
+			crl::guard(this, [=] {
+				NovaGram::Forbidden::PassOnce();
+				send(options);
+			}))) {
+		return;
+	}
 	const auto webPageDraft = _composeControls->webPageDraft();
 
 	auto message = Api::MessageToSend(prepareSendAction(options));

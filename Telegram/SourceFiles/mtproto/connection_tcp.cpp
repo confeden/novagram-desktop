@@ -9,6 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "mtproto/details/mtproto_abstract_socket.h"
 #include "mtproto/details/mtproto_web_proxy_socket.h"
+#include "mtproto/details/mtproto_ws_socket.h"
+#include "novagram/nova_wss.h"
 #include "base/bytes.h"
 #include "base/openssl_help.h"
 #include "base/random.h"
@@ -532,8 +534,15 @@ void TcpConnection::connectToServer(
 		_port = port;
 		_protocol = Protocol::Create(secret);
 	}
+	// A proxy of the user's own always wins; WSS is the way out only when
+	// none is set and the setting is on.
+	const auto viaWss = (_proxy.type == ProxyData::Type::None)
+		&& NovaGram::Wss::EnabledForSocket()
+		&& NovaGram::Wss::Supports(protocolDcId);
 	_socket = (_proxy.type == ProxyData::Type::Web)
 		? std::make_unique<WebProxySocket>(thread(), _proxy)
+		: viaWss
+		? std::make_unique<WsSocket>(thread(), protocolDcId, protocolForFiles)
 		: AbstractSocket::Create(
 			thread(),
 			secret,

@@ -68,7 +68,9 @@ private:
 		HasCompressedStickers = (1 << 2),
 		SendLargePhotos = (1 << 3),
 
-		Default = GroupFiles | SendImagesAsPhotos,
+		// NovaGram: photos go out as photos at the large size by default, with the
+		// least compression Telegram offers as a photo (not as a file).
+		Default = GroupFiles | SendImagesAsPhotos | SendLargePhotos,
 	};
 	friend inline constexpr bool is_flag_type(Flag) { return true; };
 

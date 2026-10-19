@@ -553,6 +553,12 @@ private:
 	mutable std::unique_ptr<FromNameStatus> _fromNameStatus;
 	mutable std::unique_ptr<Ui::RoundCheckbox> _selectionRoundCheckbox;
 	mutable uint32 _fromNameVersion : 16 = 0;
+
+	// NovaGram: the verdict of the forbidden-list check for this element's
+	// author, valid while the generation matches. A cheap cache so that a paint
+	// is one integer compare, not a hash probe.
+	mutable uint32 _novaForbiddenGeneration = 0;
+	mutable bool _novaForbidden = false;
 	uint32 _nonTextMaxWidth : 16 = 0;
 	mutable int _bubbleTextualWidthMinimum : 16 = -1;
 	mutable int _bubbleTextualWidthCache : 16 = 0;

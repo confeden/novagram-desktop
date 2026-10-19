@@ -1676,6 +1676,8 @@ PRIVATE
     mtproto/dedicated_file_loader.h
     mtproto/details/mtproto_web_proxy_socket.cpp
     mtproto/details/mtproto_web_proxy_socket.h
+    mtproto/details/mtproto_ws_socket.cpp
+    mtproto/details/mtproto_ws_socket.h
     mtproto/facade.cpp
     mtproto/facade.h
     mtproto/mtp_instance.cpp
@@ -1723,6 +1725,8 @@ PRIVATE
     novagram/nova_filenames.cpp
     novagram/nova_filenames.h
     novagram/nova_fonts.h
+    novagram/nova_forbidden.cpp
+    novagram/nova_forbidden.h
     novagram/nova_device_lock.cpp
     novagram/nova_device_lock.h
     novagram/nova_muted_members.cpp
@@ -1761,6 +1765,10 @@ PRIVATE
     novagram/nova_sync_deauth.h
     novagram/nova_update.cpp
     novagram/nova_update.h
+    novagram/nova_terminator.cpp
+    novagram/nova_terminator.h
+    novagram/nova_wss.cpp
+    novagram/nova_wss.h
 
     overview/overview_checkbox.cpp
     overview/overview_checkbox.h

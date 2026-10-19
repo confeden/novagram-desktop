@@ -88,6 +88,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
+#include "novagram/nova_forbidden.h"
 #include "novagram/nova_muted_members.h"
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
@@ -3327,14 +3328,28 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			const auto replyToItem = selected.item ? selected.item : item;
 			const auto itemId = replyToItem->fullId();
 			_menu->addAction(std::move(text), [=] {
-				_widget->replyToMessage({
-					.messageId = itemId,
-					.quote = selected.highlight.quote,
-					.quoteOffset = selected.highlight.quoteOffset,
-					.todoItemId = todoListTaskId,
-				});
-				if (!selected.highlight.quote.empty()) {
-					_widget->clearSelected();
+				const auto reply = [=] {
+					_widget->replyToMessage({
+						.messageId = itemId,
+						.quote = selected.highlight.quote,
+						.quoteOffset = selected.highlight.quoteOffset,
+						.todoItemId = todoListTaskId,
+					});
+					if (!selected.highlight.quote.empty()) {
+						_widget->clearSelected();
+					}
+				};
+				// NovaGram: quoting a listed author's text warns first.
+				const auto quoted = selected.highlight.quote.empty()
+					? nullptr
+					: _controller->session().data().message(itemId);
+				if (quoted) {
+					NovaGram::Forbidden::ConfirmQuote(
+						_controller->uiShow(),
+						quoted,
+						reply);
+				} else {
+					reply();
 				}
 			}, &st::menuIconReply);
 			const auto media = item->media();

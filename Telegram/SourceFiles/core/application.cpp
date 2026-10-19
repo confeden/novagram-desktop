@@ -65,10 +65,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_device_lock.h"
 #include "novagram/nova_fonts.h"
+#include "novagram/nova_forbidden.h"
 #include "novagram/nova_pin_policy.h"
 #include "novagram/nova_screen_guard.h"
 #include "novagram/nova_metadata.h"
 #include "novagram/nova_update.h"
+#include "novagram/nova_wss.h"
 #include "media/view/media_view_overlay_widget.h"
 #include "media/view/media_view_open_common.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -332,10 +334,19 @@ void Application::run() {
 	// nothing at all while the decoy is on.
 	NovaGram::Update::Start();
 
+	// The list of forbidden persons and resources: loaded from the cache or
+	// the bundled snapshot, then refreshed once a day. Off in the decoy.
+	NovaGram::Forbidden::Start();
+
 	// Read once here so that the worker thread which prepares an upload has an
 	// answer without touching the settings, which belong to this thread.
 	[[maybe_unused]] const auto stripMetadata
 		= NovaGram::StripMetadataEnabled();
+
+	// Same for the connection thread, which decides per socket whether to go
+	// over WSS and must not touch the settings to do it.
+	[[maybe_unused]] const auto wss = NovaGram::Wss::Enabled();
+	NovaGram::Wss::Start();
 
 	Test::ApplyStartupOverrides();
 
@@ -2161,14 +2172,16 @@ void Application::RegisterUrlScheme() {
 			descriptor(u"tg"_q, u"Telegram Link"_q, fork));
 		base::Platform::UnregisterUrlScheme(
 			descriptor(u"tonsite"_q, u"TonSite Link"_q, fork));
+		base::Platform::UnregisterUrlScheme(
+			descriptor(u"ton"_q, u"Ton Link"_q, fork));
 	}
 
 	base::Platform::RegisterUrlScheme(
 		descriptor(u"tg"_q, u"Telegram Link"_q, display));
 	base::Platform::RegisterUrlScheme(
 		descriptor(u"tonsite"_q, u"TonSite Link"_q, display));
-	base::Platform::RegisterUrlScheme(
-		descriptor(u"ton"_q, u"Ton Link"_q, display));
+	// NovaGram: no `ton` scheme - the wallet it opens is off in this fork, and
+	// the registration would show this app under its own name (I4).
 }
 
 bool IsAppLaunched() {

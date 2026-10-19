@@ -48,13 +48,29 @@ enum class EnterMode {
 }
 
 [[nodiscard]] bool CheckPrimaryPin(const QString &pin) {
-	return Core::App().domain().local().checkPasscode(pin.toUtf8());
+	auto &local = Core::App().domain().local();
+	return local.checkPasscode(local.prepareOpen(pin.toUtf8()));
 }
 
-void ApplyPrimaryPin(const QString &pin) {
+// The verification proves the current primary PIN was typed; upstream's
+// setPasscode() takes it for every change or removal over an existing one.
+[[nodiscard]] std::optional<Storage::PasscodeVerification> VerifyPrimaryPin(
+		const QString &pin) {
+	return Core::App().domain().local().verifyPasscode(pin.toUtf8());
+}
+
+[[nodiscard]] bool ApplyPrimaryPin(
+		const QString &pin,
+		Storage::PasscodeVerification verification) {
 	cSetPasscodeBadTries(0);
-	Core::App().domain().local().setPasscode(pin.toUtf8());
+	const auto result = Core::App().domain().local().setPasscode(
+		pin.toUtf8(),
+		verification);
+	if (result != Storage::SetPasscodeResult::Success) {
+		return false;
+	}
 	Core::App().localPasscodeChanged();
+	return true;
 }
 
 [[nodiscard]] QString ModeTitle(EnterMode mode) {
@@ -184,10 +200,15 @@ void EnterBox(not_null<Ui::GenericBox*> box, EnterMode mode) {
 		const auto currentText = current ? current->text() : QString();
 		const auto createdText = created ? created->text() : QString();
 		const auto confirmText = confirm ? confirm->text() : QString();
-		if (current && !CheckPrimaryPin(currentText)) {
-			current->showError();
-			showError(WrongPin());
-			return;
+		auto verification = Storage::PasscodeVerification();
+		if (current) {
+			const auto proof = VerifyPrimaryPin(currentText);
+			if (!proof) {
+				current->showError();
+				showError(WrongPin());
+				return;
+			}
+			verification = *proof;
 		}
 		if (needNew) {
 			if (!ValidPin(createdText)) {
@@ -211,7 +232,10 @@ void EnterBox(not_null<Ui::GenericBox*> box, EnterMode mode) {
 					: u"The primary PIN must differ from the emergency."_q);
 				return;
 			}
-			ApplyPrimaryPin(createdText);
+			if (!ApplyPrimaryPin(createdText, verification)) {
+				showError(WrongPin());
+				return;
+			}
 			SetPinModeEnabled(true);
 			ResetFailedAttempts();
 			// The system unlock bypasses both the pin and the emergency pin
@@ -220,7 +244,10 @@ void EnterBox(not_null<Ui::GenericBox*> box, EnterMode mode) {
 			Core::App().saveSettingsDelayed();
 			break;
 		case EnterMode::RemovePrimary:
-			ApplyPrimaryPin(QString());
+			if (!ApplyPrimaryPin(QString(), verification)) {
+				showError(WrongPin());
+				return;
+			}
 			SetPinModeEnabled(false);
 			Core::App().settings().setSystemUnlockEnabled(false);
 			Core::App().saveSettingsDelayed();

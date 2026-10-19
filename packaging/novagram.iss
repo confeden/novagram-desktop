@@ -42,6 +42,16 @@ SignTool=brent-sign
 
 [Files]
 Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; The list of forbidden persons and resources, first-start snapshot beside the exe.
+Source: "{#BuildDir}\novagram_forbidden.json"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; The TLS helper of the "look like Yandex Browser" setting (WSS transport) and what it
+; needs: Mozilla's root list (BoringSSL has no Windows certificate store) and the
+; licences of what is linked into it. The helper is staged into BuildDir by
+; package-desktop-inno.ps1; without it the setting stays hidden and WSS uses Qt TLS.
+Source: "{#BuildDir}\nova-tls-terminator.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}\nova_roots.pem"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\NovaGram"; Filename: "{app}\{#MyAppExeName}"; Comment: "NovaGram"

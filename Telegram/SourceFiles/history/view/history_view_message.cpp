@@ -58,6 +58,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "mainwidget.h"
 #include "main/main_session.h"
+#include "novagram/nova_forbidden.h"
 #include "novagram/nova_muted_members.h"
 #include "settings/sections/settings_premium.h"
 #include "ui/text/text_options.h"
@@ -2024,6 +2025,15 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 					.simple = simple,
 					.selection = mediaSelectionIntervals,
 				});
+		}
+
+		if (_novaForbiddenGeneration != NovaGram::Forbidden::Generation()) {
+			_novaForbiddenGeneration = NovaGram::Forbidden::Generation();
+			_novaForbidden = !data()->out()
+				&& NovaGram::Forbidden::ForItem(data()).has_value();
+		}
+		if (_novaForbidden) {
+			NovaGram::Forbidden::PaintMark(p, g);
 		}
 
 		auto inner = g;

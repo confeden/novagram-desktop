@@ -86,6 +86,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "core/mime_type.h"
 #include "main/main_session.h"
+#include "novagram/nova_forbidden.h"
 #include "main/main_session_settings.h"
 #include "media/player/media_player_instance.h"
 #include "menu/menu_timecode_action.h"
@@ -2375,6 +2376,17 @@ void ChatWidget::sendVoice(const ComposeControls::VoiceToSend &data) {
 void ChatWidget::send(Api::SendOptions options) {
 	if (const auto page = _composeControls->shownRichMessage()) {
 		sendRichDraft(page, options);
+		return;
+	}
+	// NovaGram: a link to a listed resource warns once, at send time only.
+	if (NovaGram::Forbidden::ConfirmSend(
+			controller()->uiShow(),
+			_history->peer,
+			_composeControls->getTextWithAppliedMarkdown().text,
+			crl::guard(this, [=] {
+				NovaGram::Forbidden::PassOnce();
+				send(options);
+			}))) {
 		return;
 	}
 	if (!options.scheduled) {

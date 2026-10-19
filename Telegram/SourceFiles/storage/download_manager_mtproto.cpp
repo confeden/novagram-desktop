@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_document.h"
 #include "apiwrap.h"
 #include "base/openssl_help.h"
+#include "novagram/nova_wss.h"
 
 namespace Storage {
 namespace {
@@ -577,8 +578,17 @@ mtpRequestId DownloadMtprotoTask::sendRequest(
 		}).toDC(shiftedDcId).send();
 	}, [&](const StorageFileLocation &location) {
 		const auto reference = location.fileReference();
+		// A CDN redirect sends the download to a CDN data centre, and no
+		// relay carries those: over WSS the redirect would leave the file
+		// waiting on a plain TCP connection that is blocked. Asking without
+		// the flag makes the server answer from the data centre itself, which
+		// is also what the web client does.
+		const auto cdn = NovaGram::Wss::EnabledForSocket()
+			? MTPupload_GetFile::Flags()
+			: MTPupload_GetFile::Flags(
+				MTPupload_GetFile::Flag::f_cdn_supported);
 		return api().request(MTPupload_GetFile(
-			MTP_flags(MTPupload_GetFile::Flag::f_cdn_supported),
+			MTP_flags(cdn),
 			location.tl(api().session().userId()),
 			MTP_long(offset),
 			MTP_int(limit)

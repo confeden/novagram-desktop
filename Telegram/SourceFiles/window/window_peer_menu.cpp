@@ -72,6 +72,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_drop_incoming.h"
 #include "novagram/nova_erase.h"
+#include "novagram/nova_forbidden.h"
 #include "novagram/nova_muted_members.h"
 #include "novagram/nova_read_status.h"
 #include "apiwrap.h"
@@ -3237,6 +3238,19 @@ base::weak_qptr<Ui::BoxContent> ShowForwardMessagesBox(
 		Fn<void()> &&successCallback) {
 	const auto session = &show->session();
 	const auto owner = &session->data();
+	// NovaGram: forwarding a message of a listed author warns first; "Continue"
+	// re-enters here and is let through once.
+	if (NovaGram::Forbidden::ConfirmForward(show, session, draft.ids, [=] {
+		auto again = draft;
+		auto callback = successCallback;
+		NovaGram::Forbidden::PassOnce();
+		ShowForwardMessagesBox(
+			show,
+			std::move(again),
+			std::move(callback));
+	})) {
+		return nullptr;
+	}
 	const auto itemsList = owner->idsToItems(draft.ids);
 	const auto msgIds = owner->itemsToIds(itemsList);
 	const auto sendersCount = ItemsForwardSendersCount(itemsList);

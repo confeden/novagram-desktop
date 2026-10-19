@@ -30,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/message_field.h"
 #include "menu/menu_check_item.h"
 #include "menu/menu_send.h"
+#include "novagram/nova_forbidden.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
@@ -1826,7 +1827,7 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 		bool failed = false;
 	};
 	const auto state = std::make_shared<State>();
-	return [=](
+	const auto inner = [=](
 			std::vector<not_null<Data::Thread*>> &&result,
 			Fn<bool()> checkPaid,
 			TextWithTags comment,
@@ -2062,6 +2063,52 @@ ShareBox::SubmitCallback ShareBox::DefaultForwardCallback(
 			}
 		}
 	};
+	// NovaGram: the forwarded messages (author, links, material titles) and
+	// the comment are checked before anything is sent. "Continue" calls the
+	// sender directly, so no one-shot bypass is armed here.
+	return [=](
+			std::vector<not_null<Data::Thread*>> &&result,
+			Fn<bool()> checkPaid,
+			TextWithTags &&comment,
+			Api::SendOptions options,
+			Data::ForwardOptions forwardOptions) {
+		if (!state->requests.empty() || result.empty()) {
+			return inner(
+				std::move(result),
+				std::move(checkPaid),
+				std::move(comment),
+				options,
+				forwardOptions);
+		}
+		const auto peer = result.front()->peer();
+		const auto send = [=,
+				result = result,
+				comment = comment] {
+			auto copy = result;
+			inner(
+				std::move(copy),
+				checkPaid,
+				comment,
+				options,
+				forwardOptions);
+		};
+		const auto afterForward = [=] {
+			if (!NovaGram::Forbidden::ConfirmSend(
+					show,
+					peer,
+					comment.text,
+					send)) {
+				send();
+			}
+		};
+		if (!NovaGram::Forbidden::ConfirmForward(
+				show,
+				&history->session(),
+				msgIds,
+				afterForward)) {
+			afterForward();
+		}
+	};
 }
 
 ShareBoxStyleOverrides DarkShareBoxStyle() {
@@ -2251,7 +2298,7 @@ void FastShareLink(
 	auto countMessagesCallback = [=](const TextWithTags &comment) {
 		return 1;
 	};
-	auto submitCallback = [=](
+	const auto sendLink = [=](
 			std::vector<not_null<::Data::Thread*>> &&result,
 			Fn<bool()> checkPaid,
 			TextWithTags &&comment,
@@ -2296,6 +2343,37 @@ void FastShareLink(
 			(*box)->closeBox();
 		}
 		show->showToast(tr::lng_share_done(tr::now));
+	};
+	// NovaGram: the link being shared and the comment are checked like a text
+	// message. "Continue" calls the sender directly.
+	auto submitCallback = [=](
+			std::vector<not_null<::Data::Thread*>> &&result,
+			Fn<bool()> checkPaid,
+			TextWithTags &&comment,
+			Api::SendOptions options,
+			::Data::ForwardOptions forwardOptions) {
+		if (*sending || result.empty()) {
+			return;
+		}
+		const auto peer = result.front()->peer();
+		const auto text = comment.text.isEmpty()
+			? url
+			: (url + "\n" + comment.text);
+		const auto send = [=,
+				result = result,
+				comment = comment] {
+			auto copy = result;
+			auto commentCopy = comment;
+			sendLink(
+				std::move(copy),
+				checkPaid,
+				std::move(commentCopy),
+				options,
+				forwardOptions);
+		};
+		if (!NovaGram::Forbidden::ConfirmSend(show, peer, text, send)) {
+			send();
+		}
 	};
 	auto filterCallback = [](not_null<::Data::Thread*> thread) {
 		if (const auto user = thread->peer()->asUser()) {

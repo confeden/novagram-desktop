@@ -110,6 +110,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "novagram/nova_autodelete.h"
+#include "novagram/nova_forbidden.h"
 #include "media/audio/media_audio.h"
 #include "media/player/media_player_instance.h"
 #include "spellcheck/spellcheck_types.h"
@@ -862,12 +863,27 @@ bool AddReplyToMessageAction(
 			tr::now,
 			Ui::Text::FixAmpersandInAction);
 	menu->addAction(std::move(text), [=, itemId = item->fullId()] {
-		list->replyToMessageRequestNotify({
-			.messageId = itemId,
-			.quote = quote.highlight.quote,
-			.quoteOffset = quote.highlight.quoteOffset,
-			.todoItemId = todoListTaskId,
-		}, base::IsCtrlPressed());
+		const auto ctrl = base::IsCtrlPressed();
+		const auto reply = [=] {
+			list->replyToMessageRequestNotify({
+				.messageId = itemId,
+				.quote = quote.highlight.quote,
+				.quoteOffset = quote.highlight.quoteOffset,
+				.todoItemId = todoListTaskId,
+			}, ctrl);
+		};
+		// NovaGram: quoting a listed author's text warns first.
+		const auto quoted = quote.highlight.quote.empty()
+			? nullptr
+			: list->controller()->session().data().message(itemId);
+		if (quoted) {
+			NovaGram::Forbidden::ConfirmQuote(
+				list->controller()->uiShow(),
+				quoted,
+				reply);
+		} else {
+			reply();
+		}
 	}, &st::menuIconReply);
 	return true;
 }

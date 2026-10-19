@@ -163,6 +163,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "menu/menu_send.h"
 #include "menu/menu_timecode_action.h"
 #include "mtproto/mtproto_config.h"
+#include "novagram/nova_forbidden.h"
 #include "novagram/nova_read_status.h"
 #include "lang/lang_keys.h"
 #include "settings/business/settings_quick_replies.h"
@@ -5696,6 +5697,18 @@ void HistoryWidget::saveEditMessage(Api::SendOptions options) {
 		}
 	}
 
+	// NovaGram: the edited text is checked like a new message.
+	if (NovaGram::Forbidden::ConfirmSend(
+			controller()->uiShow(),
+			_history->peer,
+			sending.text,
+			crl::guard(this, [=] {
+				NovaGram::Forbidden::PassOnce();
+				saveEditMessage(options);
+			}))) {
+		return;
+	}
+
 	_saveEditMsgRequestId = Api::EditTextMessage(
 		item,
 		sending,
@@ -5840,7 +5853,24 @@ void HistoryWidget::send(Api::SendOptions options) {
 	} else if (_editMsgId) {
 		saveEditMessage({});
 		return;
-	} else if (const auto page = shownRichMessage()) {
+	}
+	// NovaGram: a link to a listed resource warns once, at send time only.
+	// The check stands before the rich draft branch, so a rich draft is
+	// checked by its flattened text.
+	const auto page = shownRichMessage();
+	if (NovaGram::Forbidden::ConfirmSend(
+			controller()->uiShow(),
+			_history->peer,
+			page
+				? Iv::FlattenRichPageToSimpleText(*page).text
+				: _field->getTextWithAppliedMarkdown().text,
+			crl::guard(this, [=] {
+				NovaGram::Forbidden::PassOnce();
+				send(options);
+			}))) {
+		return;
+	}
+	if (page) {
 		sendRichDraft(page, options);
 		return;
 	}
@@ -8062,6 +8092,29 @@ void HistoryWidget::sendingFilesConfirmed(
 			action.options,
 			withPaymentApproved);
 		if (!checked) {
+			return;
+		}
+	}
+
+	// NovaGram: the captions are checked like a message text. After the payment
+	// check, so the confirmation is not asked again when that one re-enters.
+	{
+		auto captions = QString();
+		for (const auto &group : bundle->groups) {
+			for (const auto &file : group.list.files) {
+				if (!file.caption.text.isEmpty()) {
+					captions += file.caption.text + '\n';
+				}
+			}
+		}
+		if (NovaGram::Forbidden::ConfirmSend(
+				controller()->uiShow(),
+				_peer,
+				captions,
+				crl::guard(this, [=] {
+					NovaGram::Forbidden::PassOnce();
+					sendingFilesConfirmed(bundle, options);
+				}))) {
 			return;
 		}
 	}
