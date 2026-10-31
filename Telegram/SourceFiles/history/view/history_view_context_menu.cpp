@@ -857,7 +857,7 @@ bool AddReplyToMessageAction(
 	const auto &quote = request.quote;
 	auto text = (todoListTaskId
 		? tr::lng_context_reply_to_task
-		: quote.highlight.quote.empty()
+		: !quote
 		? tr::lng_context_reply_msg
 		: tr::lng_context_quote_and_reply)(
 			tr::now,
@@ -870,6 +870,7 @@ bool AddReplyToMessageAction(
 				.quote = quote.highlight.quote,
 				.quoteOffset = quote.highlight.quoteOffset,
 				.todoItemId = todoListTaskId,
+				.richQuote = quote.highlight.richQuote,
 			}, ctrl);
 		};
 		// NovaGram: quoting a listed author's text warns first.
