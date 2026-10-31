@@ -2209,8 +2209,8 @@ void Application::RegisterUrlScheme() {
 		descriptor(u"tg"_q, u"Telegram Link"_q, display));
 	base::Platform::RegisterUrlScheme(
 		descriptor(u"tonsite"_q, u"TonSite Link"_q, display));
-	// NovaGram: no `ton` scheme - the wallet it opens is off in this fork, and
-	// the registration would show this app under its own name (I4).
+	base::Platform::RegisterUrlScheme(
+		descriptor(u"ton"_q, u"Ton Link"_q, display));
 }
 
 bool IsAppLaunched() {

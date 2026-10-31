@@ -8,8 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/websocket_client.h"
 
 #include "base/random.h"
+#include "novagram/nova_doh.h"
 
 #include <QtCore/QCryptographicHash>
+#include <QtCore/QPointer>
+#include <QtNetwork/QHostAddress>
 
 namespace Core {
 namespace {
@@ -25,6 +28,16 @@ constexpr auto kMaxFramePayload = quint64(4 * 1024 * 1024);
 constexpr auto kMaxUpgradeResponse = 8 * 1024;
 constexpr auto kAcceptGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 constexpr auto kSecureDefaultPort = 443;
+
+// NovaGram: the one place the wallet streams from. The URL comes from the
+// server inside a TL answer, so the host it names is an input, not a fact: a
+// stream that may open to any host lets whoever controls that answer pick where
+// this client connects and what it hands over in the query string.
+[[nodiscard]] bool AllowedStreamHost(const QString &host) {
+	const auto name = host.toLower();
+	return (name == u"toncenter.com"_q)
+		|| name.endsWith(u".toncenter.com"_q);
+}
 
 } // namespace
 
@@ -62,7 +75,55 @@ void WebSocketClient::connectTo(
 	_target = requestTarget;
 	_subprotocol = subprotocol;
 	_state = State::Connecting;
-	_socket.connectToHostEncrypted(host, quint16(port));
+
+	// NovaGram: this socket used to go straight out of connectToHostEncrypted -
+	// the system resolver, whatever the application proxy happened to be, any
+	// certificate authority the machine trusts. Here the name is allow-listed,
+	// resolved over the pinned DoH endpoints only (a miss is a failure, never a
+	// fall-back to getaddrinfo), reached through the proxy the fork decides on,
+	// and verified against the pinned roots under the real name.
+	if (!AllowedStreamHost(host) || port <= 0 || port > 65535) {
+		fail();
+		return;
+	}
+	const auto weak = QPointer<WebSocketClient>(this);
+	const auto proxy = NovaGram::Doh::ProxyFor(
+		QUrl(u"https://"_q + host + u"/"_q));
+	const auto open = [=](QString address) {
+		if (!weak || weak->_state != State::Connecting) {
+			return;
+		}
+		auto config = NovaGram::Doh::PinnedConfiguration();
+		config.setPeerVerifyMode(QSslSocket::VerifyPeer);
+		weak->_socket.setProxy(proxy);
+		weak->_socket.setSslConfiguration(config);
+		weak->_socket.setPeerVerifyName(host);
+		weak->_socket.connectToHostEncrypted(
+			address,
+			quint16(port),
+			host);
+	};
+	NovaGram::Doh::Resolve(host, NovaGram::Doh::RecordType::A, [=](
+			NovaGram::Doh::Answer a) {
+		for (const auto &value : a.values) {
+			if (!QHostAddress(value).isNull()) {
+				open(value);
+				return;
+			}
+		}
+		NovaGram::Doh::Resolve(host, NovaGram::Doh::RecordType::AAAA, [=](
+				NovaGram::Doh::Answer b) {
+			for (const auto &value : b.values) {
+				if (!QHostAddress(value).isNull()) {
+					open(value);
+					return;
+				}
+			}
+			if (weak) {
+				weak->fail();
+			}
+		});
+	});
 }
 
 void WebSocketClient::onSslConnected() {

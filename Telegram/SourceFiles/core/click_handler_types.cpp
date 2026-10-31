@@ -136,11 +136,15 @@ constexpr auto kReminderSetToastDuration = 4 * crl::time(1000);
 	};
 }
 
+// NovaGram: v7.3.3 reads this list from the server's app config, so the server
+// could end the "open this link?" confirmation for any domain it names, at any
+// time and for every user. The confirmation exists for the case where the
+// server or a sender is not to be believed, so the list stays the one compiled
+// in.
 [[nodiscard]] std::vector<QString> WhitelistedDomains(
 		const Main::AppConfig &config) {
-	return config.get<std::vector<QString>>(
-		u"whitelisted_domains"_q,
-		DefaultWhitelistedDomains());
+	Q_UNUSED(config);
+	return DefaultWhitelistedDomains();
 }
 
 [[nodiscard]] std::vector<QString> WhitelistedDomains(

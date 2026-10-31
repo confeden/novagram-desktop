@@ -283,10 +283,7 @@ QString AppConfig::oldWalletBotUsername() const {
 }
 
 bool AppConfig::walletAvailable() const {
-	// NovaGram: the upstream wallet (toncenter, rates, onramp, TON Connect) is
-	// off in this fork whatever the server says, as on Android in release, so
-	// no third-party request leaves the client that the owner did not ask for.
-	return false;
+	return get<bool>(u"wallet_available"_q, true);
 }
 
 int AppConfig::storiesAlbumsLimit() const {

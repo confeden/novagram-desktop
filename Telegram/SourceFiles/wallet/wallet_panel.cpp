@@ -145,11 +145,6 @@ bool MinimizeActiveWindow() {
 void OpenTransferLink(
 		not_null<Window::SessionController*> controller,
 		const QString &url) {
-	// NovaGram: the wallet is off in this fork (see AppConfig::walletAvailable);
-	// every link and click that would open it does nothing instead.
-	if (!controller->session().appConfig().walletAvailable()) {
-		return;
-	}
 	if (!TransferLinkValid(url)) {
 		controller->showToast(tr::lng_wallet_send_invalid_address(tr::now));
 		return;
@@ -168,11 +163,6 @@ void OpenSendGramsLink(
 		not_null<Window::SessionController*> controller,
 		const QString &to,
 		const QString &amount) {
-	// NovaGram: the wallet is off in this fork (see AppConfig::walletAvailable);
-	// every link and click that would open it does nothing instead.
-	if (!controller->session().appConfig().walletAvailable()) {
-		return;
-	}
 	const auto amountNano = ParseLinkAmount(amount);
 	if (!amountNano || (to.isEmpty() && !amount.isEmpty())) {
 		controller->showToast(tr::lng_wallet_send_link_invalid(tr::now));
@@ -234,11 +224,6 @@ void OpenSendMoney(
 void OpenTonConnectLink(
 		not_null<Window::SessionController*> controller,
 		const TonConnectLink &link) {
-	// NovaGram: the wallet is off in this fork (see AppConfig::walletAvailable);
-	// every link and click that would open it does nothing instead.
-	if (!controller->session().appConfig().walletAvailable()) {
-		return;
-	}
 	auto &tonConnect = controller->session().wallet().tonConnect();
 	if (link.kind == TonConnectLinkKind::OpenPending) {
 		tonConnect.requests().openPending(controller, link.clientId);
@@ -252,11 +237,6 @@ void OpenTonConnectLink(
 void OpenTonConnectRequest(
 		not_null<Window::SessionController*> controller,
 		FullMsgId itemId) {
-	// NovaGram: the wallet is off in this fork (see AppConfig::walletAvailable);
-	// every link and click that would open it does nothing instead.
-	if (!controller->session().appConfig().walletAvailable()) {
-		return;
-	}
 	controller->session().wallet().tonConnect().requests().open(
 		controller,
 		itemId);
