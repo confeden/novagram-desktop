@@ -1767,6 +1767,8 @@ PRIVATE
     novagram/nova_update.h
     novagram/nova_terminator.cpp
     novagram/nova_terminator.h
+    novagram/nova_relay_token.cpp
+    novagram/nova_relay_token.h
     novagram/nova_wss.cpp
     novagram/nova_wss.h
 

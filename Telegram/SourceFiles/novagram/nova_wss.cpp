@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_decoy.h"
 #include "novagram/nova_doh.h"
 #include "novagram/nova_pin.h"
+#include "novagram/nova_relay_token.h"
 #include "novagram/nova_terminator.h"
 #include "settings.h"
 
@@ -263,13 +264,15 @@ std::atomic<crl::time> RelayBlockedUntil[3];
 	return result;
 }
 
-// Index 0 is the official relay, then the own relays, then the mirrors; the
-// number is what the ladder remembers, so a new list only has to keep the
-// order meaningful, not the numbers.
+// Index 0 is the official relay, then the own relays, then the mirrors, then -
+// only while a token is had - our own Worker; the number is what the ladder
+// remembers, so a new list only has to keep the order meaningful, not the
+// numbers.
 [[nodiscard]] Route RouteAt(
 		const RouteSet &set,
 		int protocolDcId,
-		int index) {
+		int index,
+		const QString &workerToken) {
 	if (index <= 0) {
 		return MakeRoute(set.official, protocolDcId, 0, false);
 	}
@@ -278,8 +281,21 @@ std::atomic<crl::time> RelayBlockedUntil[3];
 		return MakeRoute(set.own[index - 1], protocolDcId, index, false);
 	}
 	const auto count = int(set.fronts.size());
+	if (index == own + count + 1 && !workerToken.isEmpty()) {
+		auto entry = Entry();
+		entry.host = u"kws{dc}{media}.nova-app.eu"_q;
+		auto result = MakeRoute(entry, protocolDcId, index, false);
+		result.token = workerToken;
+		return result;
+	}
 	const auto front = (index - 1 - own + FrontOffset(count)) % count;
 	return MakeRoute(set.fronts[front], protocolDcId, index, true);
+}
+
+// The routes after the official relay: the own relays, the mirrors, and the
+// Worker when there is a token for it.
+[[nodiscard]] int OthersCount(const RouteSet &set, bool worker) {
+	return int(set.own.size() + set.fronts.size()) + (worker ? 1 : 0);
 }
 
 // ---- The published list: once a day, only when it changed. -----------------
@@ -538,20 +554,24 @@ std::vector<Route> Attempt(int protocolDcId, int count) {
 		return result;
 	}
 	const auto set = CurrentSet();
+	// Asks for a token in the background; this attempt uses what is had now.
+	RelayToken::Ensure();
+	const auto workerToken = RelayToken::Current();
 	// The official relay first, unless it was found blocked a moment ago.
 	// Several data centres share one ingress address, so one failure is
 	// known to all of them, and a connection does not spend its first 3.5
 	// seconds on a door that is known to be shut.
 	if (RelayAvailable(protocolDcId)) {
-		result.push_back(RouteAt(*set, protocolDcId, 0));
+		result.push_back(RouteAt(*set, protocolDcId, 0, workerToken));
 	}
-	const auto others = int(set->own.size() + set->fronts.size());
+	const auto others = OthersCount(*set, !workerToken.isEmpty());
 	const auto start = std::max(WalkStart[SlotFor(protocolDcId)].load(), 1);
 	for (auto i = 0; int(result.size()) < count && i != others; ++i) {
 		result.push_back(RouteAt(
 			*set,
 			protocolDcId,
-			1 + (start - 1 + i) % others));
+			1 + (start - 1 + i) % others,
+			workerToken));
 	}
 	return result;
 }
@@ -576,7 +596,7 @@ void NoteFailed(int protocolDcId, const Route &route) {
 	}
 	// The next one, wrapping and never onto the official relay.
 	const auto set = CurrentSet();
-	const auto others = int(set->own.size() + set->fronts.size());
+	const auto others = OthersCount(*set, !RelayToken::Current().isEmpty());
 	if (!others) {
 		return;
 	}

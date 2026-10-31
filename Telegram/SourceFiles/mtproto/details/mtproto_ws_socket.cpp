@@ -397,7 +397,11 @@ void WsSocket::sendUpgrade() {
 			"Sec-WebSocket-Key: " + _key
 		+ "\r\nSec-WebSocket-Extensions: permessage-deflate; "
 			"client_max_window_bits\r\n"
-			"Sec-WebSocket-Protocol: binary\r\n\r\n";
+			"Sec-WebSocket-Protocol: binary"
+		+ (_route.token.isEmpty()
+			? QByteArray()
+			: (", " + _route.token.toLatin1()))
+		+ "\r\n\r\n";
 	_socket->write(request);
 }
 

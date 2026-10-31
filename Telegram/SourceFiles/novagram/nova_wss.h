@@ -46,6 +46,7 @@ struct Route {
 	QString path;
 	bool front = false;
 	int index = 0;  // place in the ladder: 0 is the official relay
+	QString token;  // own Worker only: offered after "binary" in the upgrade
 };
 
 // Whether data centre `dcId` (the protocol id: negative for media, test mode
