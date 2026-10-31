@@ -2827,6 +2827,9 @@ if (MSVC)
         # WinVerifyTrust, for novagram/nova_authenticode.cpp. Crypt32 is
         # already in cmake/options_win.cmake; wintrust was not linked at all.
         wintrust
+        # Qt 6's QDnsLookup (Qt6Network, linked statically) calls DnsQuery_W and
+        # its siblings; v7.3.3 moved the fork to Qt 6 and nothing else links it.
+        dnsapi
     )
     target_link_options(Telegram
     PRIVATE

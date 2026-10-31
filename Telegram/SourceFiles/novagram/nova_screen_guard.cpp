@@ -33,9 +33,10 @@ constexpr auto kEnabledKey = "novagram_screen_guard"_cs;
 // photo on screen, an open payment form - and sweeps every top level window
 // itself when the last of them goes. While it holds one, the affinity of a
 // window is not this guard's to release even when the guard is switched off.
-[[nodiscard]] bool UpstreamProtectionActive() {
+[[nodiscard]] bool UpstreamProtectionActive(not_null<QWidget*> widget) {
+	// v7.3.3 keeps its reasons per window, so the question is asked of this one.
 	return Core::IsAppLaunched()
-		&& Core::App().screenshotProtection().active();
+		&& Core::App().screenshotProtection().activeFor(widget);
 }
 
 // Never QWidget::winId() here, however much it looks like the way to get the
@@ -67,7 +68,7 @@ void ApplyToWindow(not_null<QWidget*> widget) {
 		return;
 	}
 	const auto enabled = ScreenGuardEnabled();
-	if (!enabled && UpstreamProtectionActive()) {
+	if (!enabled && UpstreamProtectionActive(widget)) {
 		// This is the only path that ever clears an affinity, and it must not
 		// clear one it did not set. With the guard switched off the window is
 		// hidden because upstream is showing content that asks for it, and

@@ -290,7 +290,9 @@ struct Counters {
 			MTPProfileTab(),
 			MTPDocument(),
 			MTPTextWithEntities(),
-			MTPlong()),
+			MTPlong(),
+			MTPwallet_Card(),
+			MTPShareTheme()),
 		MTP_vector<MTPChat>(),
 		MTP_vector<MTPUser>(QVector<MTPUser>{ *found }))));
 }
@@ -423,7 +425,8 @@ struct Counters {
 			MTPint(),
 			MTPlong(),
 			MTPProfileTab(),
-			MTPlong()),
+			MTPlong(),
+			MTPShareTheme()),
 		MTP_vector<MTPChat>(persona.chats),
 		MTP_vector<MTPUser>(persona.users))));
 }

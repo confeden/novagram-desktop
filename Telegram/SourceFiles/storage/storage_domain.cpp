@@ -53,6 +53,11 @@ enum class ReadKeyDataResult {
 	UnsupportedKdf,
 	Failed,
 	WrongDevice,
+
+	// NovaGram (I17): the file is intact but this build cannot read what it
+	// holds - a trailer of another format, or a newer one. The sealed bytes are
+	// still good, so it is never a reason to start over.
+	Unreadable,
 };
 
 // A legacy key_data stream holds exactly three blobs, so it is at the end
@@ -222,10 +227,10 @@ constexpr auto kMaxWrapCount = quint32(2);
 		return ReadKeyDataResult::Failed;
 	} else if (magic != kKeyDataMagic) {
 		LOG(("App Error: bad key data trailer magic."));
-		return ReadKeyDataResult::Failed;
+		return ReadKeyDataResult::Unreadable;
 	} else if (formatVersion > kKeyDataFormatVersion) {
 		LOG(("App Error: too new key data format: %1").arg(formatVersion));
-		return ReadKeyDataResult::Failed;
+		return ReadKeyDataResult::Unreadable;
 	} else if (wrapCount > kMaxWrapCount) {
 		LOG(("App Error: bad key data wrap count: %1").arg(wrapCount));
 		return ReadKeyDataResult::Failed;
@@ -572,7 +577,10 @@ Domain::StartModernResult Domain::startModern(
 		return StartModernResult::Failed;
 	} else if (read == ReadKeyDataResult::UnsupportedKdf) {
 		return StartModernResult::IncorrectPasscode;
-	} else if (read == ReadKeyDataResult::WrongDevice) {
+	} else if (read == ReadKeyDataResult::WrongDevice
+		|| read == ReadKeyDataResult::Unreadable) {
+		// Unreadable takes the same road as a file sealed to another machine:
+		// refuse, keep the bytes, let the owner decide (I17).
 		return StartModernResult::WrongDevice;
 	}
 	*_keyData = std::move(parsed);

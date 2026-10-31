@@ -32,6 +32,11 @@ public:
 		rpl::producer<bool> active,
 		rpl::lifetime &lifetime);
 
+	// NovaGram: whether upstream itself holds this window protected right now.
+	// Public because the fork's screen guard has to ask before it lets go of an
+	// affinity it did not set; v7.3.1 offered a single process-wide active().
+	[[nodiscard]] bool activeFor(not_null<QWidget*> window) const;
+
 private:
 	void addReason(
 		not_null<QWidget*> window,
@@ -39,7 +44,6 @@ private:
 		rpl::lifetime &lifetime);
 	void refresh();
 	void apply(not_null<QWidget*> window, bool force = false);
-	[[nodiscard]] bool activeFor(not_null<QWidget*> window) const;
 
 	struct Reason {
 		QPointer<QWidget> window;

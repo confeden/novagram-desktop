@@ -540,7 +540,8 @@ int64 Builder::addChannel(const QString &title, int age) {
 		MTPlong(),
 		MTPlong(),
 		MTPlong(),
-		MTPlong()));
+		MTPlong(),
+		MTPint()));
 	return id;
 }
 
