@@ -96,6 +96,9 @@ private:
 	Tunnel _tunnel = Tunnel::None;
 	NovaGram::Terminator::Endpoint _endpoint;
 	QString _tunnelIp;
+	crl::time _requestSentAt = 0;
+	bool _terminatorRefused = false;
+	bool _qtFallbackTried = false;
 	QTimer _timer;
 	State _state = State::Idle;
 	int _generation = 0;

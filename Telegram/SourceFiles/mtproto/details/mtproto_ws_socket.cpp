@@ -18,6 +18,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QSslCipher>
 
+#include <map>
+
 namespace MTP::details {
 namespace {
 
@@ -25,6 +27,23 @@ namespace {
 // have to fit into the 8 seconds a connection attempt is given upstairs.
 constexpr auto kRouteTimeout = crl::time(3500);
 constexpr auto kRoutesPerAttempt = 2;
+
+// Hosts whose masked (terminator) connection was refused, until when they go
+// straight over Qt TLS: a refusal costs the full handshake timeout each time.
+constexpr auto kQtPreferredFor = crl::time(10 * 60 * 1000);
+std::mutex QtPreferredMutex;
+std::map<QString, crl::time> QtPreferredUntil;
+
+[[nodiscard]] bool PreferQt(const QString &host) {
+	const auto lock = std::lock_guard(QtPreferredMutex);
+	const auto i = QtPreferredUntil.find(host);
+	return (i != QtPreferredUntil.end()) && (crl::now() < i->second);
+}
+
+void RememberQt(const QString &host) {
+	const auto lock = std::lock_guard(QtPreferredMutex);
+	QtPreferredUntil[host] = crl::now() + kQtPreferredFor;
+}
 constexpr auto kMaxFrame = quint64(32) * 1024 * 1024;
 constexpr auto kMaxHandshake = 16 * 1024;
 constexpr auto kGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -129,6 +148,8 @@ void WsSocket::tryNextRoute() {
 		_error.fire({});
 		return;
 	}
+	_qtFallbackTried = false;
+	_terminatorRefused = false;
 	dropSocket();
 	_in.clear();
 	_inPos = 0;
@@ -184,10 +205,14 @@ void WsSocket::resolved(int generation, const QString &ip) {
 void WsSocket::startRoute(const QString &ip) {
 	_state = State::Connecting;
 	_tunnel = Tunnel::None;
-	if (const auto endpoint = NovaGram::Terminator::Current()) {
+	const auto endpoint = PreferQt(_route.host)
+		? std::nullopt
+		: NovaGram::Terminator::Current();
+	if (endpoint) {
 		startTerminatorRoute(ip, *endpoint);
 	} else {
-		if (NovaGram::Terminator::Enabled()
+		if (!PreferQt(_route.host)
+			&& NovaGram::Terminator::Enabled()
 			&& NovaGram::Wss::EnabledForSocket()) {
 			NovaGram::Terminator::NoteFellBack(u"not running"_q);
 		}
@@ -297,6 +322,7 @@ bool WsSocket::handleTunnel() {
 			request.insert(u"verify_roots"_q, _endpoint.roots);
 			request.insert(u"connect_timeout_ms"_q, 2500);
 			request.insert(u"handshake_timeout_ms"_q, 2500);
+			_requestSentAt = crl::now();
 			_socket->write(
 				QJsonDocument(request).toJson(QJsonDocument::Compact)
 				+ '\n');
@@ -304,9 +330,11 @@ bool WsSocket::handleTunnel() {
 		} else {
 			const auto reply = QJsonDocument::fromJson(line).object();
 			if (!reply.value(u"ok"_q).toBool()) {
-				LOG(("WSS: terminator refused %1: %2.").arg(
+				LOG(("WSS: terminator refused %1 after %2 ms: %3.").arg(
 					_route.host,
+					QString::number(crl::now() - _requestSentAt),
 					reply.value(u"error"_q).toString()));
+				_terminatorRefused = true;
 				return false;
 			}
 			_tunnel = Tunnel::None;
@@ -458,6 +486,24 @@ void WsSocket::handleRead() {
 	_in.append(_socket->readAll());
 	if (_state == State::Connecting && _tunnel != Tunnel::None) {
 		if (!handleTunnel()) {
+			if (_terminatorRefused && !_qtFallbackTried) {
+				// The masked connection was refused (on some lines it is
+				// blackholed to Cloudflare while the plain Qt one is not): the
+				// same route is tried once over Qt TLS before it counts as failed.
+				_qtFallbackTried = true;
+				RememberQt(_route.host);
+				_terminatorRefused = false;
+				LOG(("WSS: route %1: retrying over Qt TLS.").arg(_route.host));
+				++_generation;
+				dropSocket();
+				_in.clear();
+				_inPos = 0;
+				_tunnel = Tunnel::None;
+				_state = State::Connecting;
+				_timer.start(kRouteTimeout);
+				startQtRoute(_tunnelIp);
+				return;
+			}
 			routeFailed(u"terminator"_q);
 			return;
 		} else if (_state != State::Handshake) {

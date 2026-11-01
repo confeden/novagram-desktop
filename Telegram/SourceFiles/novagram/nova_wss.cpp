@@ -600,8 +600,14 @@ void NoteFailed(int protocolDcId, const Route &route) {
 	if (!others) {
 		return;
 	}
+	// A slot at zero means the first route (Attempt reads it so): without
+	// this the compare never matched on a fresh start and the walk stood on
+	// the first two mirrors for ever, never reaching the Worker at the end.
 	auto &slot = WalkStart[SlotFor(protocolDcId)];
-	auto expected = route.index;
+	auto expected = slot.load();
+	if (std::max(expected, 1) != route.index) {
+		return;
+	}
 	slot.compare_exchange_strong(
 		expected,
 		1 + (route.index % others));
