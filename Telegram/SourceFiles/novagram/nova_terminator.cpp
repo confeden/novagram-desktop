@@ -240,7 +240,7 @@ bool Available() {
 
 bool Enabled() {
 	return Available()
-		&& Core::App().settings().readPref<bool>(kEnabledKey, true);
+		&& Core::App().settings().readPref<bool>(kEnabledKey, false);
 }
 
 void SetEnabled(bool enabled) {
