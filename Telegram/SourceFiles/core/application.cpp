@@ -72,6 +72,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "novagram/nova_metadata.h"
 #include "novagram/nova_update.h"
 #include "novagram/nova_wss.h"
+#include "novagram/nova_webapp_sdk.h"
 #include "media/view/media_view_overlay_widget.h"
 #include "media/view/media_view_open_common.h"
 #include "mtproto/mtproto_dc_options.h"
@@ -350,6 +351,7 @@ void Application::run() {
 	// over WSS and must not touch the settings to do it.
 	[[maybe_unused]] const auto wss = NovaGram::Wss::Enabled();
 	NovaGram::Wss::Start();
+	NovaGram::WebAppSdk::Register();
 
 	Test::ApplyStartupOverrides();
 

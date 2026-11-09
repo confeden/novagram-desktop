@@ -37,6 +37,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <atomic>
 #include <mutex>
 
+#ifdef Q_OS_WIN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#endif // Q_OS_WIN
+
 namespace NovaGram::Wss {
 namespace {
 
@@ -543,6 +549,133 @@ QString About() {
 			"connections."_q;
 }
 
+namespace {
+
+// --- the network under us ---------------------------------------------------
+//
+// Owner decision: behind a VPN the own Cloudflare Worker is never used, nor is
+// a token enrolled for it; the official relay and the public mirrors stay.
+// And a change of the network under the client - a VPN coming up or going
+// down, another adapter taking the default route - forgets what the old one
+// taught: the official relay is tried directly again instead of staying
+// marked blocked for ten minutes, and the walk starts from the first mirror.
+
+constexpr auto kNetworkCheckEvery = crl::time(3000);
+
+std::atomic<bool> VpnNow = false;
+std::mutex NetworkMutex;
+QString NetworkSeen;
+crl::time NetworkCheckedAt = 0;
+
+#ifdef Q_OS_WIN
+bool LooksLikeVpn(const IP_ADAPTER_ADDRESSES &adapter) {
+	const auto text = (QString::fromWCharArray(adapter.Description)
+		+ ' '
+		+ QString::fromWCharArray(adapter.FriendlyName)).toLower();
+	const auto has = [&](std::initializer_list<const char*> markers) {
+		for (const auto marker : markers) {
+			if (text.contains(QString::fromLatin1(marker))) {
+				return true;
+			}
+		}
+		return false;
+	};
+	// PPP alone is not a VPN: PPPoE is how many home lines (Rostelecom
+	// among them) reach the internet. Only Windows' own VPN protocols are.
+	if (adapter.IfType == IF_TYPE_PPP) {
+		return has({ "vpn", "l2tp", "pptp", "sstp", "ikev2" });
+	}
+	// Wintun/WireGuard and most userland VPNs show up as virtual adapters.
+	return (adapter.IfType == IF_TYPE_PROP_VIRTUAL)
+		|| has({
+			"vpn", "tap-windows", "tap-win32", "wintun", "wireguard",
+			"openvpn", "amnezia", "zerotier", "tailscale", "nordlynx",
+			"outline", "sing-box", "hiddify", "v2ray", "xray", "clash" });
+}
+
+// The adapter the system would send Telegram's traffic through, and whether
+// it is a VPN. Asked for a public address, so split tunnels answer for us.
+QString ProbeNetwork(bool *vpn) {
+	*vpn = false;
+	auto destination = sockaddr_in();
+	destination.sin_family = AF_INET;
+	destination.sin_addr.s_addr = htonl(0x959AA7DC); // 149.154.167.220
+	auto index = DWORD(0);
+	if (GetBestInterfaceEx(
+			reinterpret_cast<sockaddr*>(&destination),
+			&index) != NO_ERROR) {
+		return u"none"_q;
+	}
+	auto size = ULONG(16 * 1024);
+	auto buffer = std::vector<char>();
+	auto status = ULONG(ERROR_BUFFER_OVERFLOW);
+	for (auto tries = 0; tries != 3 && status == ERROR_BUFFER_OVERFLOW; ++tries) {
+		buffer.resize(size);
+		status = GetAdaptersAddresses(
+			AF_UNSPEC,
+			GAA_FLAG_SKIP_ANYCAST
+				| GAA_FLAG_SKIP_MULTICAST
+				| GAA_FLAG_SKIP_DNS_SERVER,
+			nullptr,
+			reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()),
+			&size);
+	}
+	if (status != NO_ERROR) {
+		return u"if%1"_q.arg(index);
+	}
+	for (auto adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+			adapter;
+			adapter = adapter->Next) {
+		if (adapter->IfIndex == index) {
+			*vpn = LooksLikeVpn(*adapter);
+			return u"if%1/%2"_q.arg(index).arg(*vpn ? u"vpn"_q : u"direct"_q);
+		}
+	}
+	return u"if%1"_q.arg(index);
+}
+#else // Q_OS_WIN
+QString ProbeNetwork(bool *vpn) {
+	*vpn = false;
+	return u"default"_q;
+}
+#endif // Q_OS_WIN
+
+void CheckNetwork() {
+	const auto now = crl::now();
+	{
+		std::lock_guard<std::mutex> lock(NetworkMutex);
+		if (NetworkCheckedAt && now - NetworkCheckedAt < kNetworkCheckEvery) {
+			return;
+		}
+		NetworkCheckedAt = now;
+	}
+	auto vpn = false;
+	const auto signature = ProbeNetwork(&vpn);
+	VpnNow = vpn;
+	auto changed = false;
+	{
+		std::lock_guard<std::mutex> lock(NetworkMutex);
+		changed = !NetworkSeen.isEmpty() && (NetworkSeen != signature);
+		NetworkSeen = signature;
+	}
+	if (changed) {
+		for (auto &blocked : RelayBlockedUntil) {
+			blocked.store(0);
+		}
+		for (auto &slot : WalkStart) {
+			slot.store(0);
+		}
+		LOG(("NovaGram WSS: network changed (%1), direct relay retried, "
+			"walk restarted").arg(vpn ? "vpn" : "direct"));
+	}
+}
+
+} // namespace
+
+bool BehindVpn() {
+	return VpnNow.load();
+}
+
 bool Supports(int protocolDcId) {
 	const auto dc = AbsDc(protocolDcId);
 	return (dc >= 1) && (dc <= 5);
@@ -553,10 +686,13 @@ std::vector<Route> Attempt(int protocolDcId, int count) {
 	if (!Supports(protocolDcId)) {
 		return result;
 	}
+	CheckNetwork();
 	const auto set = CurrentSet();
 	// Asks for a token in the background; this attempt uses what is had now.
-	RelayToken::Ensure();
-	const auto workerToken = RelayToken::Current();
+	// Behind a VPN the Worker rung is left out and no token is asked for.
+	const auto workerToken = VpnNow.load()
+		? QString()
+		: (RelayToken::Ensure(), RelayToken::Current());
 	// The official relay first, unless it was found blocked a moment ago.
 	// Several data centres share one ingress address, so one failure is
 	// known to all of them, and a connection does not spend its first 3.5
@@ -596,7 +732,9 @@ void NoteFailed(int protocolDcId, const Route &route) {
 	}
 	// The next one, wrapping and never onto the official relay.
 	const auto set = CurrentSet();
-	const auto others = OthersCount(*set, !RelayToken::Current().isEmpty());
+	const auto others = OthersCount(
+		*set,
+		!VpnNow.load() && !RelayToken::Current().isEmpty());
 	if (!others) {
 		return;
 	}

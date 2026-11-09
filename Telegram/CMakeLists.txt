@@ -1798,6 +1798,8 @@ PRIVATE
     novagram/nova_relay_token.h
     novagram/nova_wss.cpp
     novagram/nova_wss.h
+    novagram/nova_webapp_sdk.cpp
+    novagram/nova_webapp_sdk.h
 
     overview/overview_checkbox.cpp
     overview/overview_checkbox.h
@@ -2584,6 +2586,7 @@ PRIVATE
     qrc/telegram/picker.qrc
     qrc/telegram/telegram.qrc
     qrc/telegram/sounds.qrc
+    qrc/telegram/novagram.qrc
     winrc/Telegram.rc
     winrc/Telegram.manifest
     langs/lang.strings

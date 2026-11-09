@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/novagram">
+    <file alias="telegram-web-app.js">../../novagram/telegram-web-app.js</file>
+  </qresource>
+</RCC>

@@ -53,6 +53,10 @@ struct Route {
 // shifted by 10000) can be carried this way at all.
 [[nodiscard]] bool Supports(int protocolDcId);
 
+// Whether the client's traffic leaves through a VPN, as last seen by Attempt.
+// Behind one the own Worker is not used and no token is enrolled for it.
+[[nodiscard]] bool BehindVpn();
+
 // Routes to try for one connection attempt, best first: the one that worked
 // last time, then the next. Exhausting them is a failed attempt, and the next
 // attempt starts further along.
